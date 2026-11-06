@@ -1,0 +1,59 @@
+# Lavalink v4 config — YouTube is provided by the youtube-source plugin.
+#
+# Secrets/knobs come from environment variables (set them on the Railway
+# "lavalink" service; for local docker compose see docker-compose.yml):
+#   LAVALINK_SERVER_PASSWORD   REQUIRED — Lavalink refuses to boot without it
+#   YOUTUBE_PLUGIN_VERSION     optional — default 1.18.2 (latest tagged release)
+#   YOUTUBE_PLUGIN_SNAPSHOT    optional — "true" only when the version above is a snapshot commit hash
+#   SERVER_ADDRESS             optional — set to 0.0.0.0 if binding "::" ever fails
+#
+# YouTube blocks many datacenter IPs ("Sign in to confirm you're not a bot").
+# If that happens on Railway, enable OAuth with a THROWAWAY Google account via
+# env vars (no file edit needed):
+#   PLUGINS_YOUTUBE_OAUTH_ENABLED=true
+#   (first boot: read the code from the Lavalink logs, approve at google.com/device,
+#    copy the refresh token from the logs, then also set:)
+#   PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN=<token>
+#   PLUGINS_YOUTUBE_OAUTH_SKIPINITIALIZATION=true
+# See https://github.com/lavalink-devs/youtube-source/releases for newer versions.
+server:
+  port: 2333
+  # "::" = IPv4 + IPv6. Railway's private network needs IPv6 in older environments.
+  address: "::"
+
+lavalink:
+  plugins:
+    - dependency: "dev.lavalink.youtube:youtube-plugin:${YOUTUBE_PLUGIN_VERSION:1.18.2}"
+      snapshot: ${YOUTUBE_PLUGIN_SNAPSHOT:false}
+  server:
+    password: "${LAVALINK_SERVER_PASSWORD}"
+    bufferDurationMs: 800
+    frameBufferDurationMs: 5000
+    opusEncodingQuality: 10
+    resamplingQuality: MEDIUM
+    trackStuckThresholdMs: 15000
+    sources:
+      youtube: false              # built-in source is disabled in favour of the plugin
+      bandcamp: false
+      soundcloud: false
+      twitch: false
+      vimeo: false
+      http: false
+      local: false
+
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: false
+    clients:
+      - MUSIC
+      - ANDROID_VR
+      - WEB
+      - WEBEMBEDDED
+
+logging:
+  level:
+    root: INFO
+    lavalink: INFO

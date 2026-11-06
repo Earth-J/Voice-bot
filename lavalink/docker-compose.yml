@@ -1,0 +1,14 @@
+# Local development only. On Railway the Dockerfile in this folder is used instead.
+# Make sure LAVALINK_PASSWORD in the bot's .env matches LAVALINK_SERVER_PASSWORD here.
+services:
+  lavalink:
+    build: .
+    container_name: lavalink
+    restart: unless-stopped
+    environment:
+      - _JAVA_OPTIONS=-Xmx1G
+      - LAVALINK_SERVER_PASSWORD=${LAVALINK_SERVER_PASSWORD:-youshallnotpass}
+    volumes:
+      - ./plugins:/opt/Lavalink/plugins
+    ports:
+      - "2333:2333"
