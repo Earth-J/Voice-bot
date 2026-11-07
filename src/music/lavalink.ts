@@ -57,6 +57,8 @@ export class LavalinkMusic {
   private hooked = new WeakSet<Player>();
   /** Called whenever the current song or the queue changes (used to refresh the queue embed). */
   onChange: ((guildId: string) => void) | null = null;
+  /** Called when a request found nothing playable (or the queue was full). */
+  onNotFound: ((guildId: string) => void) | null = null;
   /** Songs waiting after the current one (1 = next up). */
   private queues = new Map<string, TrackQueue<Track>>();
 
@@ -119,6 +121,14 @@ export class LavalinkMusic {
       this.onChange?.(guildId);
     } catch (e) {
       console.warn("[music] onChange handler threw:", e);
+    }
+  }
+
+  private notFound(guildId: string): void {
+    try {
+      this.onNotFound?.(guildId);
+    } catch (e) {
+      console.warn("[music] onNotFound handler threw:", e);
     }
   }
 
@@ -203,7 +213,10 @@ export class LavalinkMusic {
 
     const track = await this.search(query);
     if (id !== this.req.get(guildId)) return null;
-    if (!track) return null;
+    if (!track) {
+      this.notFound(guildId);
+      return null;
+    }
 
     const player = await this.ensurePlayer(guildId, channelId);
     if (id !== this.req.get(guildId)) return null;
@@ -229,10 +242,14 @@ export class LavalinkMusic {
     }
 
     const track = await this.search(query);
-    if (!track) return null;
+    if (!track) {
+      this.notFound(guildId);
+      return null;
+    }
     const position = this.queueFor(guildId).push(track);
     if (position === null) {
       console.warn(`[music] queue full (${MAX_QUEUE}) — dropped "${track.title}"`);
+      this.notFound(guildId);
       return null;
     }
     console.log(`[music] ➕ queued #${position}: ${track.title}`);

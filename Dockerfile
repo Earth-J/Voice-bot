@@ -19,6 +19,8 @@ RUN bun install --frozen-lockfile --production \
 
 COPY tsconfig.json ./
 COPY src ./src
+# Status sound effects (.mp3) — see sounds/README.txt
+COPY sounds ./sounds
 
 # Set REGISTER_COMMANDS_ON_START=true for ONE deploy to (re)register slash commands.
 # `exec` makes bun PID 1 so Railway's SIGTERM triggers the bot's graceful shutdown.

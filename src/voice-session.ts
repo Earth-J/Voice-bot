@@ -9,12 +9,20 @@
  */
 import {
   joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  NoSubscriberBehavior,
+  StreamType,
   VoiceConnectionStatus,
   entersState,
+  type AudioPlayer,
+  type PlayerSubscription,
   type VoiceConnection,
   type DiscordGatewayAdapterCreator,
 } from "@discordjs/voice";
 import { unlink } from "node:fs/promises";
+import { PassThrough } from "node:stream";
+import { getSfx, type SfxName } from "./sfx.ts";
 import { startSpeakerCapture, type AudioChunk } from "./audio-pipeline.ts";
 import { transcribeAndCleanup } from "./stt/index.ts";
 import { emptyUsage, formatUsage, type UsageMetrics } from "./cost.ts";
@@ -65,6 +73,9 @@ export class VoiceSession {
   /** While in the future, the auto-leave watchers skip this session. 0 = off. */
   private _persistentUntil = 0;
   private _usage: UsageMetrics = emptyUsage();
+  /** Plays the short status sounds (sfx.ts) through this bot's own voice connection. */
+  private _sfxPlayer: AudioPlayer | null = null;
+  private _sfxSub: PlayerSubscription | null = null;
 
   channelId?: string;
   guildId?: string;
@@ -91,16 +102,18 @@ export class VoiceSession {
     this._activeSpeakers.clear();
     this._usage = emptyUsage();
 
-    // This bot only listens (music is played by the separate Lavalink bot), so it
-    // joins self-muted. NOT deafened — a deafened bot receives no audio.
+    // This bot listens and plays short status sounds (music itself is played by the
+    // separate Lavalink bot). NOT deafened (a deafened bot receives no audio) and NOT
+    // muted (a self-muted bot's sounds may not be heard).
     const conn = joinVoiceChannel({
       channelId: args.channelId,
       guildId: args.guildId,
       adapterCreator: args.adapterCreator,
       selfDeaf: false,
-      selfMute: true,
+      selfMute: false,
     });
     this._connection = conn;
+    this._dropSfxPlayer();
 
     conn.on("stateChange", (oldS: any, newS: any) => {
       console.log(
@@ -184,6 +197,36 @@ export class VoiceSession {
     });
   }
 
+  /** Play a short status sound in the voice channel. No-op if not connected or the file is missing. */
+  playSfx(name: SfxName): void {
+    if (this._state !== "listening" || !this._connection) return;
+    const pcm = getSfx(name);
+    if (!pcm) return;
+    try {
+      if (!this._sfxPlayer) {
+        const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+        player.on("error", (e: Error) => console.warn(`[sfx] player error:`, e.message));
+        this._sfxPlayer = player;
+        this._sfxSub = this._connection.subscribe(player) ?? null;
+      }
+      const stream = new PassThrough();
+      stream.end(pcm);
+      // A new sound cuts off the previous one (they are all very short).
+      this._sfxPlayer.play(createAudioResource(stream, { inputType: StreamType.Raw }));
+    } catch (e: any) {
+      console.warn(`[sfx] could not play "${name}":`, e?.message ?? e);
+    }
+  }
+
+  private _dropSfxPlayer(): void {
+    try {
+      this._sfxPlayer?.stop(true);
+      this._sfxSub?.unsubscribe();
+    } catch {}
+    this._sfxPlayer = null;
+    this._sfxSub = null;
+  }
+
   /** STT one audio chunk and pass the text on. Nothing is saved. */
   private async _transcribeChunk(
     chunk: AudioChunk,
@@ -219,6 +262,7 @@ export class VoiceSession {
     const durationMs = this.startedAt ? Date.now() - this.startedAt : 0;
     const channelName = this.channelName;
 
+    this._dropSfxPlayer();
     try {
       this._connection?.destroy();
     } catch (e) {

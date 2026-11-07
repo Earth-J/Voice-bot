@@ -61,6 +61,7 @@ import { YOI_BASE_NAMES, ALIAS_TO_SUBCOMMAND } from "./commands.ts";
 import { parseVoiceCommand } from "./voice-command.ts";
 import { correctSongQuery } from "./stt/gemini.ts";
 import { LavalinkMusic } from "./music/lavalink.ts";
+import { loadSfx } from "./sfx.ts";
 import { buildQueueEmbed } from "./music/queue.ts";
 
 const token = process.env.DISCORD_TOKEN;
@@ -182,21 +183,29 @@ async function handleSpeech(session: VoiceSession, ev: SpeechEvent): Promise<voi
   if (cmd.kind === "skip") {
     music
       .skip(session.guildId)
-      .then((r) =>
+      .then((r) => {
         console.log(
           `[earth-voice] ⏭️ voice command from user=${ev.userId}: skip → ` +
             (r.skipped ? `"${r.skipped.title}" skipped, now ${r.next ? `"${r.next.title}"` : "nothing"}` : "nothing was playing"),
-        ),
-      )
+        );
+        if (r.skipped) session.playSfx("skip");
+      })
       .catch((e: any) => console.warn("[earth-voice] skip failed:", e?.message ?? e));
     return;
   }
 
   if (cmd.kind === "queue-add") {
     console.log(`[earth-voice] ➕ voice command from user=${ev.userId}: queue add "${cmd.query}"`);
-    music.enqueue(session.guildId, session.channelId, cmd.query).catch((e: any) => {
-      console.warn(`[earth-voice] queue add failed for "${cmd.query}":`, e?.message ?? e);
-    });
+    music
+      .enqueue(session.guildId, session.channelId, cmd.query)
+      .then((r) => {
+        // position 0 = nothing was playing, so it started right away
+        if (r) session.playSfx(r.position === 0 ? "play" : "add");
+      })
+      .catch((e: any) => {
+        console.warn(`[earth-voice] queue add failed for "${cmd.query}":`, e?.message ?? e);
+        session.playSfx("notfound");
+      });
     return;
   }
 
@@ -206,6 +215,7 @@ async function handleSpeech(session: VoiceSession, ev: SpeechEvent): Promise<voi
       `[earth-voice] 🗑️ voice command from user=${ev.userId}: queue remove #${cmd.index} → ` +
         (removed ? `"${removed.title}"` : "no such item"),
     );
+    session.playSfx(removed ? "remove" : "notfound");
     return;
   }
 
@@ -225,16 +235,28 @@ async function handleSpeech(session: VoiceSession, ev: SpeechEvent): Promise<voi
 
   if (cmd.kind === "stop") {
     console.log(`[earth-voice] 🎵 voice command from user=${ev.userId}: stop`);
-    music.stop(session.guildId).catch((e: any) => {
-      console.warn("[earth-voice] stop failed:", e?.message ?? e);
-    });
+    const wasActive = music.isPlaying(session.guildId) || music.getQueue(session.guildId).length > 0;
+    music
+      .stop(session.guildId)
+      .then(() => {
+        if (wasActive) session.playSfx("stop");
+      })
+      .catch((e: any) => {
+        console.warn("[earth-voice] stop failed:", e?.message ?? e);
+      });
     return;
   }
 
   console.log(`[earth-voice] 🎵 voice command from user=${ev.userId}: play "${cmd.query}"`);
-  music.play(session.guildId, session.channelId, cmd.query).catch((e: any) => {
-    console.warn(`[earth-voice] play failed for "${cmd.query}":`, e?.message ?? e);
-  });
+  music
+    .play(session.guildId, session.channelId, cmd.query)
+    .then((track) => {
+      if (track) session.playSfx("play");
+    })
+    .catch((e: any) => {
+      console.warn(`[earth-voice] play failed for "${cmd.query}":`, e?.message ?? e);
+      session.playSfx("notfound");
+    });
 }
 
 // ─── Live queue embed ────────────────────────────────────────────────────────
@@ -327,6 +349,7 @@ async function repostQueueEmbed(guildId: string): Promise<void> {
 }
 
 music.onChange = (guildId) => scheduleQueueRefresh(guildId);
+music.onNotFound = (guildId) => sessions.get(guildId)?.playSfx("notfound");
 
 /**
  * Disconnect the person who said "earth เตะผม" from voice. Only ever the
@@ -578,6 +601,7 @@ async function handleStop(interaction: ChatInputCommandInteraction) {
   }
   const was = music.nowPlaying(guildId);
   await music.stop(guildId);
+  if (was) session.playSfx("stop");
   await interaction.reply({
     content: was ? `หยุดเพลง **${was.title}** แล้วครับ` : "ตอนนี้ไม่ได้เล่นเพลงอยู่ครับ",
     flags: MessageFlags.Ephemeral,
@@ -843,5 +867,6 @@ for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
 console.log(
   `[earth-voice] starting... STT=groq (${process.env.GROQ_STT_MODEL || "whisper-large-v3"}, lang=${process.env.GROQ_STT_LANGUAGE || "th"})`,
 );
+await loadSfx();
 await music.start(musicToken);
 await client.login(token);
