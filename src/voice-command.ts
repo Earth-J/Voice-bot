@@ -42,7 +42,7 @@ const VERB = ["เปิด\\s*เพลง"].join("|");
  * the regex is a prefix match (nothing is required after the verb).
  */
 const STOP_VERB = [
-  "เงียบ",
+  "เ[งน]ียบ", // เงียบ / เนียบ (Whisper often writes เงียบ as เนียบ)
   "stop", // backup in case Whisper keeps mishearing "เงียบ"
   `สต${T}็?อ[ปบพ]`, // สต็อป / สตอป / สต๊อป
 ].join("|");
@@ -101,9 +101,9 @@ const TRAILING_FILLER =
 
 const MAX_QUERY_LEN = 120;
 
-// <wake> [ช่วย|ขอ] ข้าม | skip   (Whisper may write ข้าม as ข่าม, skip as สกิป / สกิบ)
+// <wake> [ช่วย|ขอ] ข้าม | skip   (Whisper may write ข้าม as ขาม / ข่าม / คาม / ค่าม, skip as สกิป / สกิบ)
 const SKIP_RE = new RegExp(
-  `(?:${WAKE})[\\s,.:;!?'"“”-]*(?:ช่วย|ขอ)?\\s*(?:ข${T}าม|skip|สกิ${T}[ปบพ])`,
+  `(?:${WAKE})[\\s,.:;!?'"“”-]*(?:ช่วย|ขอ)?\\s*(?:[ขค]${T}าม|skip|สกิ${T}[ปบพ])`,
   "i",
 );
 
