@@ -86,6 +86,8 @@ DC_OWNER_IDS=<discord user id ของคุณ>
 LISTEN_USER_IDS=<discord user id ที่ให้บอทฟัง>
 MUSIC_BOT_TOKEN=<token บอทเพลง>
 GROQ_API_KEY=<groq key>
+GEMINI_API_KEY=<gemini key หลัก>            # ไม่บังคับ — แก้ชื่อเพลงที่ฟังเพี้ยน
+GEMINI_API_KEY_BACKUP=<gemini key สำรอง>    # ไม่บังคับ — ใช้เมื่อ key หลักติด limit
 
 LAVALINK_HOST=${{lavalink.RAILWAY_PRIVATE_DOMAIN}}:2333
 LAVALINK_PASSWORD=${{lavalink.LAVALINK_SERVER_PASSWORD}}

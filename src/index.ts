@@ -59,6 +59,7 @@ import "sodium-native";
 import { VoiceSession, formatDuration, type SpeechEvent } from "./voice-session.ts";
 import { YOI_BASE_NAMES, ALIAS_TO_SUBCOMMAND } from "./commands.ts";
 import { parseVoiceCommand } from "./voice-command.ts";
+import { correctSongQuery } from "./stt/gemini.ts";
 import { LavalinkMusic } from "./music/lavalink.ts";
 import { buildQueueEmbed } from "./music/queue.ts";
 
@@ -156,10 +157,19 @@ client.once(Events.ClientReady, (c) => {
 // ─── Voice commands ──────────────────────────────────────────────────────────
 // Earth never answers in voice or text. A recognised command just starts music;
 // anything else that was said is dropped.
-function handleSpeech(session: VoiceSession, ev: SpeechEvent): void {
-  const cmd = parseVoiceCommand(ev.text);
+async function handleSpeech(session: VoiceSession, ev: SpeechEvent): Promise<void> {
+  let cmd = parseVoiceCommand(ev.text);
   if (!cmd) return;
   if (session.state !== "listening" || !session.guildId || !session.channelId) return;
+
+  // Only song names go through Gemini (fixes words Whisper mis-heard). Never throws;
+  // on timeout / quota / no key it returns the original text, so this adds no risk.
+  if (cmd.kind === "play" || cmd.kind === "queue-add") {
+    const fixed = await correctSongQuery(cmd.query);
+    if (fixed !== cmd.query) cmd = { ...cmd, query: fixed };
+    // The session may have ended while we waited for Gemini.
+    if (session.state !== "listening" || !session.guildId || !session.channelId) return;
+  }
 
   if (cmd.kind === "kick") {
     console.log(`[earth-voice] 🥾 voice command from user=${ev.userId}: kick me`);
@@ -489,7 +499,11 @@ async function handleJoin(interaction: ChatInputCommandInteraction) {
     adapterCreator: voiceChannel.guild.voiceAdapterCreator,
     silenceThresholdMs: SILENCE_THRESHOLD_MS,
     listenUserIds: LISTEN_USER_IDS,
-    onSpeech: (ev) => handleSpeech(session, ev),
+    onSpeech: (ev) => {
+      handleSpeech(session, ev).catch((e: any) =>
+        console.warn("[earth-voice] handleSpeech failed:", e?.message ?? e),
+      );
+    },
     onConnectionLost: () => {
       autoLeave(session, "voice connection lost (kicked / channel deleted)").catch((e) =>
         console.warn("[earth-voice] auto-leave after connection loss failed:", e),

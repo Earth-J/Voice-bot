@@ -38,6 +38,8 @@ export interface Track {
   title: string;
   uri?: string;
   lengthMs: number;
+  /** Source id (e.g. YouTube video id). Stable across Lavalink events, unlike `encoded`. */
+  identifier?: string;
   /** Lavalink-encoded track data (what actually gets played). */
   encoded: string;
 }
@@ -160,6 +162,7 @@ export class LavalinkMusic {
       title: picked.info.title,
       uri: picked.info.uri,
       lengthMs: picked.info.length,
+      identifier: picked.info.identifier,
       encoded: picked.encoded,
     };
   }
@@ -309,9 +312,14 @@ export class LavalinkMusic {
     this.hooked.add(player);
 
     // Ignore events about a song that is no longer the current one.
+    // NOTE: compare the track *identifier*, not `encoded`. Lavalink re-encodes the track
+    // for events and the encoding includes the playback position, so on 'finished' the
+    // string never equals the one we started with → every natural end looked "stale"
+    // and the queue never advanced.
     const isStale = (ev: any): boolean => {
       const cur = this.now.get(guildId);
-      return !!cur && !!ev?.track?.encoded && cur.encoded !== ev.track.encoded;
+      const evId = ev?.track?.info?.identifier;
+      return !!cur && !!cur.identifier && !!evId && cur.identifier !== evId;
     };
     const advanceLogged = () =>
       this.advance(guildId).catch((e: any) =>
@@ -319,13 +327,16 @@ export class LavalinkMusic {
       );
 
     player.on("end", (ev: any) => {
+      const reason = String(ev?.reason ?? "").toLowerCase();
+      const stale = isStale(ev);
+      console.log(`[music] end event: reason=${reason} stale=${stale} queue=${this.getQueue(guildId).length}`);
       // 'replaced' = a newer song took over — don't clear its "now playing".
-      if (ev?.reason === "replaced" || isStale(ev)) return;
+      if (reason === "replaced" || stale) return;
       this.now.delete(guildId);
       this.changed(guildId);
       // Song ended on its own (or failed to load) → next in the queue.
       // 'stopped' (stop/clear) and 'cleanup' deliberately do NOT advance.
-      if (ev?.reason === "finished" || ev?.reason === "loadFailed") void advanceLogged();
+      if (reason === "finished" || reason === "loadfailed") void advanceLogged();
     });
     player.on("exception", (ev: any) => {
       console.warn("[lavalink] track exception:", ev?.exception?.message ?? ev);

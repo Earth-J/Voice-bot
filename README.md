@@ -50,6 +50,12 @@ bun run start
 | `DC_OWNER_IDS` | Discord user ID ที่ใช้คำสั่งได้ (คั่นด้วย `,`) |
 | `GROQ_API_KEY` | จาก [console.groq.com](https://console.groq.com) |
 | `MUSIC_BOT_TOKEN` | token ของบอทเพลงตัวที่สอง |
+| `GEMINI_API_KEY` *(ไม่บังคับ)* | key หลักของ Gemini — แก้ชื่อเพลงที่ Whisper ฟังเพี้ยน (ไม่ใส่ = ปิดฟีเจอร์) |
+| `GEMINI_API_KEY_BACKUP` *(ไม่บังคับ)* | key สำรอง — สลับไปใช้ทันทีเมื่อ key หลักติด limit (429) |
+| `GEMINI_MODEL` *(ไม่บังคับ)* | ชื่อโมเดล (ค่าเริ่มต้น `gemini-2.5-flash-lite`) |
+
+**แก้คำเพี้ยนด้วย Gemini:** ส่งเฉพาะ "ชื่อเพลง" จากคำสั่ง `เปิดเพลง` / `เพิ่มเพลง` (ข้อความล้วน ไม่ส่งเสียง) ไปให้ Gemini แก้ก่อนค้นหา
+คำสั่งอื่น ๆ ไม่ผ่าน Gemini จึงไม่ช้าลง ถ้า Gemini ช้าเกิน `GEMINI_TIMEOUT_MS` (2.5 วินาที) / ติด limit ทั้งสอง key / error จะใช้ข้อความเดิมจาก Whisper ทันที
 
 ค่าอื่น ๆ ดู `.env.example`
 
