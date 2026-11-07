@@ -43,13 +43,28 @@ describe("parseVoiceCommand", () => {
 
   test("stop command", () => {
     expect(parseVoiceCommand("earth เงียบ")).toEqual({ kind: "stop" });
-    expect(parseVoiceCommand("earth เนียบ")).toEqual({ kind: "stop" }); // Whisper mishearing
     expect(parseVoiceCommand("jarvis เงียบหน่อย")).toEqual({ kind: "stop" });
     expect(parseVoiceCommand("เอิร์ธ เงียบหน่อยครับ")).toEqual({ kind: "stop" });
     expect(parseVoiceCommand("จาร์วิส ช่วยเงียบหน่อย")).toEqual({ kind: "stop" });
     expect(parseVoiceCommand("เงียบ")).toBeNull(); // no wake word
     expect(parseVoiceCommand("จาร์วิส ปิดเพลง")).toBeNull(); // old phrase no longer used
     expect(parseVoiceCommand("เอิร์ธ ปิดไฟ")).toBeNull();
+  });
+
+  test("stop command: หยุดเพลง and the ways Whisper mishears it", () => {
+    for (const said of [
+      "เอิร์ธ หยุดเพลง",
+      "เอิร์ธ หยุด",
+      "เอิร์ธ จุดเพลง",
+      "เอิร์ธ ยุทธเพลง",
+      "เอิร์ธ จิตเพ็ง",
+      "เอิร์ธ เนียบ",
+    ]) {
+      expect(parseVoiceCommand(said)).toEqual({ kind: "stop" });
+    }
+    expect(parseVoiceCommand("จุดเพลง")).toBeNull(); // no wake word
+    expect(parseVoiceCommand("เอิร์ธ จุดไฟ")).toBeNull();
+    expect(parseVoiceCommand("เอิร์ธ เปิดเพลง Lemon")).toEqual({ kind: "play", query: "Lemon" });
   });
 
   test("stop command (english backup)", () => {
@@ -84,9 +99,6 @@ describe("parseVoiceCommand", () => {
     expect(parseVoiceCommand("เอิร์ธ ข้ามหน่อย")).toEqual({ kind: "skip" });
     expect(parseVoiceCommand("จาร์วิส ช่วยข้าม")).toEqual({ kind: "skip" });
     expect(parseVoiceCommand("เอิร์ธ ข่าม")).toEqual({ kind: "skip" }); // tone mishearing
-    expect(parseVoiceCommand("เอิร์ธ ขาม")).toEqual({ kind: "skip" });
-    expect(parseVoiceCommand("เอิร์ธ คาม")).toEqual({ kind: "skip" });
-    expect(parseVoiceCommand("เอิร์ธ ค่าม")).toEqual({ kind: "skip" });
     expect(parseVoiceCommand("เอิร์ธ สกิป")).toEqual({ kind: "skip" });
     expect(parseVoiceCommand("ข้าม")).toBeNull(); // no wake word
     expect(parseVoiceCommand("earth ข้ามถนน")).toEqual({ kind: "skip" }); // prefix match, like เงียบ

@@ -19,6 +19,7 @@
 import { Client, Events, GatewayIntentBits } from "discord.js";
 import { Connectors, Shoukaku, type Player } from "shoukaku";
 import { TrackQueue } from "./queue.ts";
+import { parseMusicQuery, pickCandidate } from "./query.ts";
 
 const HOST = process.env.LAVALINK_HOST || "localhost:2333";
 const PASSWORD = process.env.LAVALINK_PASSWORD || "youshallnotpass";
@@ -152,29 +153,36 @@ export class LavalinkMusic {
     return removed;
   }
 
-  /** Search YouTube and return the first playable result (no streams, not too long). */
+  /**
+   * Search YouTube and return the best playable result (no streams, not too long).
+   * "<song> ของ <artist>" is rewritten to "<artist> <song>" and the result's title must
+   * contain the song name (see music/query.ts).
+   */
   private async search(query: string): Promise<Track | null> {
     const node = this.shoukaku.getIdealNode();
     if (!node) throw new Error("Lavalink ยังไม่พร้อม (ยังไม่ได้เชื่อมต่อ node)");
 
-    const res: any = await node.rest.resolve(`${SEARCH_PREFIX}${query}`);
-    if (!res || res.loadType === "error") {
-      throw new Error(`Lavalink load failed: ${res?.data?.message ?? "unknown"}`);
+    const q = parseMusicQuery(query);
+    for (const text of q.searches) {
+      const res: any = await node.rest.resolve(`${SEARCH_PREFIX}${text}`);
+      if (!res || res.loadType === "error") {
+        throw new Error(`Lavalink load failed: ${res?.data?.message ?? "unknown"}`);
+      }
+      const candidates: any[] =
+        res.loadType === "search" ? res.data : res.loadType === "track" ? [res.data] : [];
+      const picked = pickCandidate(candidates, q, MAX_MS);
+      if (picked) {
+        return {
+          title: picked.info.title,
+          uri: picked.info.uri,
+          lengthMs: picked.info.length,
+          identifier: picked.info.identifier,
+          encoded: picked.encoded,
+        };
+      }
+      console.log(`[music] no match for "${text}"`);
     }
-    const candidates: any[] =
-      res.loadType === "search" ? res.data : res.loadType === "track" ? [res.data] : [];
-    const picked = candidates.find((t) => !t.info.isStream && t.info.length <= MAX_MS);
-    if (!picked) {
-      console.log(`[music] no playable result for "${query}"`);
-      return null;
-    }
-    return {
-      title: picked.info.title,
-      uri: picked.info.uri,
-      lengthMs: picked.info.length,
-      identifier: picked.info.identifier,
-      encoded: picked.encoded,
-    };
+    return null;
   }
 
   /** Get the guild's player, joining `channelId` with the music bot if needed. */
