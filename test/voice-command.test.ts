@@ -43,6 +43,7 @@ describe("parseVoiceCommand", () => {
 
   test("stop command", () => {
     expect(parseVoiceCommand("earth เงียบ")).toEqual({ kind: "stop" });
+    expect(parseVoiceCommand("earth เนียบ")).toEqual({ kind: "stop" }); // Whisper mishearing
     expect(parseVoiceCommand("jarvis เงียบหน่อย")).toEqual({ kind: "stop" });
     expect(parseVoiceCommand("เอิร์ธ เงียบหน่อยครับ")).toEqual({ kind: "stop" });
     expect(parseVoiceCommand("จาร์วิส ช่วยเงียบหน่อย")).toEqual({ kind: "stop" });
@@ -83,6 +84,9 @@ describe("parseVoiceCommand", () => {
     expect(parseVoiceCommand("เอิร์ธ ข้ามหน่อย")).toEqual({ kind: "skip" });
     expect(parseVoiceCommand("จาร์วิส ช่วยข้าม")).toEqual({ kind: "skip" });
     expect(parseVoiceCommand("เอิร์ธ ข่าม")).toEqual({ kind: "skip" }); // tone mishearing
+    expect(parseVoiceCommand("เอิร์ธ ขาม")).toEqual({ kind: "skip" });
+    expect(parseVoiceCommand("เอิร์ธ คาม")).toEqual({ kind: "skip" });
+    expect(parseVoiceCommand("เอิร์ธ ค่าม")).toEqual({ kind: "skip" });
     expect(parseVoiceCommand("เอิร์ธ สกิป")).toEqual({ kind: "skip" });
     expect(parseVoiceCommand("ข้าม")).toBeNull(); // no wake word
     expect(parseVoiceCommand("earth ข้ามถนน")).toEqual({ kind: "skip" }); // prefix match, like เงียบ
