@@ -92,6 +92,15 @@ describe("parseVoiceCommand", () => {
     expect(parseVoiceCommand("เอิร์ธ เตะ")).toBeNull();
   });
 
+  test("earth ออก = kick the speaker", () => {
+    expect(parseVoiceCommand("earth ออก")).toEqual({ kind: "kick" });
+    expect(parseVoiceCommand("Earth ออกไป")).toEqual({ kind: "kick" });
+    expect(parseVoiceCommand("เอิร์ธ ออกไปเลย")).toEqual({ kind: "kick" });
+    expect(parseVoiceCommand("จาร์วิส ช่วยออกหน่อย")).toEqual({ kind: "kick" });
+    expect(parseVoiceCommand("ออก")).toBeNull(); // no wake word
+    expect(parseVoiceCommand("เอิร์ธ ออกกำลังกาย")).toBeNull(); // exercise, not a command
+  });
+
   test("skip command", () => {
     expect(parseVoiceCommand("earth ข้าม")).toEqual({ kind: "skip" });
     expect(parseVoiceCommand("Earth skip")).toEqual({ kind: "skip" });

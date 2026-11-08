@@ -22,7 +22,7 @@
  *
  * Earth only listens to LISTEN_USER_IDS (default: one specific user); voice
  * commands come only from them. Voice: "earth/jarvis เพิ่มเสียง" / "earth/jarvis เบาเสียง" = ±5%.
- * Voice: "earth/jarvis เตะผม" = disconnect the speaker from the voice channel
+ * Voice: "earth/jarvis เตะผม" / "earth/jarvis ออก" = disconnect the speaker from the voice channel
  * (needs the Move Members permission for the listener bot).
  *
  * Queue (all by voice):
@@ -364,7 +364,7 @@ async function kickSpeaker(guildId: string, userId: string): Promise<void> {
     console.log(`[earth-voice] kick skipped: user=${userId} is not in a voice channel`);
     return;
   }
-  await guild.members.edit(userId, { channel: null, reason: "Earth voice command: เตะผม" });
+  await guild.members.edit(userId, { channel: null, reason: "Earth voice command: เตะผม / ออก" });
   console.log(`[earth-voice] 🥾 disconnected user=${userId} from voice in guild=${guildId}`);
 }
 

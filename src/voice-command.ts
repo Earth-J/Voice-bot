@@ -6,7 +6,7 @@
  *     "earth/jarvis เงียบ" / "earth/jarvis เงียบหน่อย" / "earth/jarvis stop" → stop the song
  *     "earth/jarvis เพิ่มเสียง" / "earth/jarvis เบาเสียง" → volume +5 / -5
  *     "earth/jarvis ข้าม" / "earth/jarvis skip" → skip to the next song in the queue
- *     "earth/jarvis เตะผม"                → disconnect the speaker from voice
+ *     "earth/jarvis เตะผม" / "earth/jarvis ออก" → disconnect the speaker from voice
  *     "earth/jarvis เพิ่มเพลง <ชื่อเพลง>"  → add a song to the queue
  *     "earth/jarvis แสดงคิว"               → post the queue in the queue channel
  *     "earth/jarvis ลบคิว <เลขลำดับ>"       → remove queue item #N
@@ -95,6 +95,16 @@ const STOP_RE = new RegExp(
 const KICK_PRONOUN = ["ผม", "ฉัน", "ดิฉัน", "เรา", "หนู", "กู", "ข้า"].join("|");
 const KICK_RE = new RegExp(
   `(?:${WAKE})[\\s,.:;!?'"“”-]*(?:ช่วย|ขอ)?\\s*เต${T}ะ\\s*(?:${KICK_PRONOUN})`,
+  "i",
+);
+
+/**
+ * "earth ออก" — short form of the same thing: the speaker (identified by
+ * their Discord userId, see handleSpeech) is disconnected from voice.
+ * "ออกกำลัง..." (exercise) is excluded so ordinary chat never triggers it.
+ */
+const KICK_OUT_RE = new RegExp(
+  `(?:${WAKE})[\\s,.:;!?'"“”-]*(?:ช่วย|ขอ)?\\s*ออก${T}(?!\\s*กำลัง)`,
   "i",
 );
 
@@ -187,7 +197,7 @@ export type MusicCommand =
 /** Returns "play" for "earth/jarvis เปิดเพลง ...", "stop" for "earth/jarvis เงียบ", "kick" for "earth/jarvis เตะผม", otherwise null. */
 export function parseVoiceCommand(text: string): MusicCommand | null {
   const norm = text.normalize("NFC");
-  if (KICK_RE.test(norm)) return { kind: "kick" };
+  if (KICK_RE.test(norm) || KICK_OUT_RE.test(norm)) return { kind: "kick" };
   if (STOP_RE.test(norm)) return { kind: "stop" };
   if (SKIP_RE.test(norm)) return { kind: "skip" };
   const v = VOLUME_RE.exec(norm);

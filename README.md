@@ -71,7 +71,7 @@ bun run start
 3. พูดว่า `earth/jarvis เงียบ` หรือ `earth/jarvis เงียบหน่อย` เพื่อหยุดเพลง (หรือ `/earth stop`) / `/earth leave` ออก
 
 เอิร์ธฟังเฉพาะ user ใน `LISTEN_USER_IDS` (ค่าเริ่มต้น `918384557131173988`) — เสียงคนอื่นไม่ถูกจับและไม่ถูกส่งไปถอดความ
-คำสั่งเสียง: `earth/jarvis เปิดเพลง <ชื่อ>` / `earth/jarvis เงียบ` (`เงียบหน่อย` / `stop` — หยุดเพลง + ล้างคิว) / `earth/jarvis เพิ่มเสียง` / `earth/jarvis เบาเสียง` (ทีละ 5%, 0–100%) / `earth/jarvis เพิ่มเพลง <ชื่อ>` (ต่อคิว) / `earth/jarvis ข้าม` (`skip` — ข้ามเพลง) / `earth/jarvis แสดงคิว` (ส่ง embed คิวใหม่ลงห้อง `QUEUE_CHANNEL_ID`) / `earth/jarvis ลบคิว <เลขลำดับ>` / `earth/jarvis เตะผม` (ตัดคนพูดออกจากห้อง voice — บอทฟังต้องมีสิทธิ์ **Move Members**)
+คำสั่งเสียง: `earth/jarvis เปิดเพลง <ชื่อ>` / `earth/jarvis เงียบ` (`เงียบหน่อย` / `stop` — หยุดเพลง + ล้างคิว) / `earth/jarvis เพิ่มเสียง` / `earth/jarvis เบาเสียง` (ทีละ 5%, 0–100%) / `earth/jarvis เพิ่มเพลง <ชื่อ>` (ต่อคิว) / `earth/jarvis ข้าม` (`skip` — ข้ามเพลง) / `earth/jarvis แสดงคิว` (ส่ง embed คิวใหม่ลงห้อง `QUEUE_CHANNEL_ID`) / `earth/jarvis ลบคิว <เลขลำดับ>` / `earth/jarvis เตะผม` / `earth/jarvis ออก` (ตัดคนพูดออกจากห้อง voice — บอทฟังต้องมีสิทธิ์ **Move Members**)
 
 | คำสั่ง | ทำอะไร |
 |---|---|
