@@ -48,12 +48,15 @@ plugins:
     allowDirectVideoIds: true
     allowDirectPlaylistIds: false
     clients:
-      - MUSIC
       - ANDROID_VR
       - WEB
-      - WEBEMBEDDED
+      - TVHTML5_SIMPLY
+      - MUSIC
 
 logging:
   level:
     root: INFO
     lavalink: INFO
+    # DEBUG here shows which YouTube client served each track and why a
+    # client was skipped/failed — needed to pin down mid-track dropouts.
+    dev.lavalink.youtube: DEBUG
