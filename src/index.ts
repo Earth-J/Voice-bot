@@ -91,6 +91,7 @@ import { parseVoiceCommand } from "./voice-command.ts";
 import { correctSongQuery } from "./stt/gemini.ts";
 import { sttConfigError, sttSummary } from "./stt/index.ts";
 import { LavalinkMusic } from "./music/lavalink.ts";
+import { MusicHistory } from "./music/history.ts";
 import { loadSfx } from "./sfx.ts";
 import { buildPlayerSections, buildQueueListText } from "./music/queue.ts";
 import { renderIdleCard, renderNowPlaying } from "./music/nowPlayingCard.ts";
@@ -170,7 +171,18 @@ setupStore.load();
 // Needs Manage Messages in the setup channel; set SETUP_DELETE_MESSAGES=false to keep them.
 const SETUP_DELETE_MESSAGES = process.env.SETUP_DELETE_MESSAGES !== "false";
 
-const music = new LavalinkMusic();
+// Song history (SQLite in DATA_DIR/music-history.db): remembers what was played so repeat requests
+// pick the same video. Set MUSIC_HISTORY=false to turn it off. Never fatal — without it the bot
+// just searches YouTube every time, as before.
+let musicHistory: MusicHistory | null = null;
+if (process.env.MUSIC_HISTORY !== "false") {
+  try {
+    musicHistory = new MusicHistory(path.join(process.env.DATA_DIR || "data", "music-history.db"));
+  } catch (e: any) {
+    console.warn("[history] could not open the song history database — continuing without it:", e?.message ?? e);
+  }
+}
+const music = new LavalinkMusic(musicHistory);
 const sessions = new Map<string, VoiceSession>();
 const aloneSince = new Map<string, number>(); // guildId → ms when bot became alone
 

@@ -101,7 +101,7 @@ export function parseMusicQuery(raw: string): MusicQuery {
 }
 
 /** Lowercase, drop punctuation, keep letters/Thai marks/digits. */
-function norm(s: string): string {
+export function norm(s: string): string {
   return s
     .normalize("NFKC")
     .toLowerCase()
@@ -110,7 +110,7 @@ function norm(s: string): string {
 }
 
 /** True if `hay` contains the phrase (ignoring spaces), or (for multi-word phrases) every word of it. */
-function has(hay: string, phrase: string): boolean {
+export function has(hay: string, phrase: string): boolean {
   const p = norm(phrase);
   if (!p) return true;
   const squash = (s: string) => s.replace(/\s+/g, "");

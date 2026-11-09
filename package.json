@@ -2,7 +2,7 @@
   "name": "voice-bot-stt",
   "version": "0.2.0",
   "type": "module",
-  "description": "Discord voice bot — real-time speech-to-text via Whisper (Groq); say \"earth เปิดเพลง <ชื่อเพลง>\" to play a song from YouTube through Lavalink. Silent otherwise; nothing is recorded.",
+  "description": "Discord voice bot — real-time speech-to-text via Whisper (Groq); say \"earth เปิดเพลง <ชื่อเพลง>\" to play a song from YouTube through Lavalink. Silent otherwise; no audio or transcripts are recorded — only a history of the songs played (SQLite) so repeat requests pick the same video.",
   "scripts": {
     "register": "bun src/register-commands.ts",
     "start": "bun src/index.ts",

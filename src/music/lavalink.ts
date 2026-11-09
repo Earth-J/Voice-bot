@@ -18,11 +18,12 @@
  *                          also the most a pasted playlist can add
  */
 import { Client, Events, GatewayIntentBits } from "discord.js";
-import { Connectors, Shoukaku, type Player } from "shoukaku";
+import { Connectors, Shoukaku, type Node, type Player } from "shoukaku";
 import { TrackQueue, type LoopMode } from "./queue.ts";
 
 export type { LoopMode } from "./queue.ts";
-import { filterPlayable, parseMusicQuery, pickCandidate } from "./query.ts";
+import { filterPlayable, parseMusicQuery, pickCandidate, type MusicQuery } from "./query.ts";
+import { queryKey, type MusicHistory } from "./history.ts";
 
 const HOST = process.env.LAVALINK_HOST || "localhost:2333";
 const PASSWORD = process.env.LAVALINK_PASSWORD || "youshallnotpass";
@@ -56,6 +57,10 @@ export interface Track {
   sourceName?: string;
   /** Discord user id of whoever asked for it (voice command / typed in the music room). */
   requestedBy?: string;
+  /** Which request this song answers (see history.ts queryKey) — lets history learn "request → video". */
+  queryKey?: string;
+  /** True when the song was picked from the play history instead of a fresh YouTube search. */
+  fromHistory?: boolean;
 }
 
 /** What happened to a pasted playlist (see LavalinkMusic.enqueue). */
@@ -86,6 +91,9 @@ function toTrack(c: any): Track {
 
 /** How many already-played songs the ⏮ button can walk back through. */
 const HISTORY_MAX = 20;
+
+/** Skipping a song sooner than this after it started means the pick was probably wrong. */
+const EARLY_SKIP_MS = 20_000;
 
 export class LavalinkMusic {
   readonly client = new Client({
@@ -119,7 +127,8 @@ export class LavalinkMusic {
   /** The song most recently started — moves into `history` when the next one starts. */
   private lastStarted = new Map<string, Track>();
 
-  constructor() {
+  /** `history` = the song-history database; null/omitted = no history (every request is a fresh search). */
+  constructor(private readonly songHistory: MusicHistory | null = null) {
     this.shoukaku = new Shoukaku(
       new Connectors.DiscordJS(this.client),
       [{ name: "main", url: HOST, auth: PASSWORD, secure: SECURE }],
@@ -287,13 +296,21 @@ export class LavalinkMusic {
    * contain the song name (see music/query.ts).
    * A YouTube video link is loaded directly instead of searched (no "ytsearch:" prefix).
    */
-  private async search(query: string): Promise<Track | null> {
+  private async search(guildId: string, query: string): Promise<Track | null> {
     const node = this.shoukaku.getIdealNode();
     if (!node) throw new Error("Lavalink ยังไม่พร้อม (ยังไม่ได้เชื่อมต่อ node)");
 
     const q = parseMusicQuery(query);
     // A playlist link given to a "play now" request: play its first song (enqueue() takes all of it).
     if (q.playlistUrl) return (await this.loadPlaylist(q.playlistUrl))?.tracks[0] ?? null;
+
+    // Asked for before in this server? Play the same video again instead of trusting the search ranking.
+    const key = q.directUrl ? "" : queryKey(q);
+    if (!q.directUrl) {
+      const remembered = await this.recall(node, guildId, q, key);
+      if (remembered) return remembered;
+    }
+
     for (const text of q.searches) {
       const res: any = await node.rest.resolve(q.directUrl ? text : `${SEARCH_PREFIX}${text}`);
       if (!res || res.loadType === "error") {
@@ -302,8 +319,43 @@ export class LavalinkMusic {
       const candidates: any[] =
         res.loadType === "search" ? res.data : res.loadType === "track" ? [res.data] : [];
       const picked = pickCandidate(candidates, q, MAX_MS);
-      if (picked) return toTrack(picked);
+      if (picked) {
+        const track = toTrack(picked);
+        if (key) track.queryKey = key;
+        return track;
+      }
       console.log(`[music] no match for "${text}"`);
+    }
+    return null;
+  }
+
+  /**
+   * Look the request up in the play history. Returns the remembered song (re-loaded from YouTube,
+   * so a deleted / blocked video is noticed) or null → fall back to a normal search.
+   */
+  private async recall(
+    node: Node,
+    guildId: string,
+    q: MusicQuery,
+    key: string,
+  ): Promise<Track | null> {
+    if (!this.songHistory) return null;
+    const match = this.songHistory.lookup(guildId, q, MAX_MS);
+    if (!match) return null;
+    try {
+      const res: any = await node.rest.resolve(match.track.uri);
+      if (res?.loadType === "track" && res.data && filterPlayable([res.data], MAX_MS).length > 0) {
+        console.log(
+          `[music] 🕘 history (${match.how}, played ${match.plays}x): "${q.song}" → ${match.track.title}`,
+        );
+        const track = toTrack(res.data);
+        if (key) track.queryKey = key;
+        track.fromHistory = true;
+        return track;
+      }
+      console.log(`[music] history pick no longer loads (${match.track.uri}) — searching instead`);
+    } catch (e: any) {
+      console.warn("[music] history lookup failed, searching instead:", e?.message ?? e);
     }
     return null;
   }
@@ -423,7 +475,10 @@ export class LavalinkMusic {
     // paused:false — Lavalink keeps the player's paused flag across songs, so a song started
     // while paused (skip / ⏮ / next in queue) would otherwise stay silent.
     await player.playTrack({ track: { encoded: track.encoded }, paused: false });
-    this.setNowPlaying(guildId, track, opts.pushHistory ?? true);
+    const fresh = opts.pushHistory ?? true;
+    this.setNowPlaying(guildId, track, fresh);
+    // ⏮ and loop replays pass pushHistory:false — they are not new plays, so they aren't counted.
+    if (fresh) this.songHistory?.recordPlay(guildId, track);
     console.log(`[music] ▶ ${track.title} (${track.uri ?? "?"})`);
     this.changed(guildId);
   }
@@ -441,7 +496,7 @@ export class LavalinkMusic {
   ): Promise<Track | null> {
     const id = this.bump(guildId);
 
-    const track = await this.search(query);
+    const track = await this.search(guildId, query);
     if (track) track.requestedBy = requestedBy;
     if (id !== this.req.get(guildId)) return null;
     if (!track) {
@@ -478,7 +533,7 @@ export class LavalinkMusic {
       return track ? { track, position: 0 } : null;
     }
 
-    const track = await this.search(query);
+    const track = await this.search(guildId, query);
     if (!track) {
       this.notFound(guildId);
       return null;
@@ -536,6 +591,11 @@ export class LavalinkMusic {
   async skip(guildId: string): Promise<{ skipped: Track | null; next: Track | null }> {
     const skipped = this.now.get(guildId) ?? null;
     if (!skipped) return { skipped: null, next: null };
+    // Skipped within seconds of starting = the request probably resolved to the wrong video.
+    const heard = this.positionMs(guildId);
+    if (skipped.queryKey && skipped.identifier && heard !== null && heard < EARLY_SKIP_MS) {
+      this.songHistory?.reject(guildId, skipped.queryKey, skipped.identifier);
+    }
     // Loop-queue: the skipped song goes to the back of the line instead of being dropped.
     if (this.getLoop(guildId) === "queue") this.queueFor(guildId).push(skipped);
     const started = await this.advance(guildId); // old song ends as 'replaced' → ignored
