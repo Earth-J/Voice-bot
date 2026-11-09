@@ -9,28 +9,26 @@ ENV NODE_ENV=production
 # The listener needs @discordjs/opus (native). The fallback, opusscript (WASM), aborts
 # on Bun as soon as 3 decoders are alive at once — see scripts/opus-stress.ts.
 #
-# Why it used to fail to install here: during `bun install` this image has no real
-# Node, so Bun's own ABI number is used when @discordjs/opus's install script asks for a
-# prebuilt binary. None is published for that number, it tries to compile, there is no
-# compiler, and the "harmless gyp error" in the log was in fact the missing binary.
+# Why `bun install` could not get it here: @discordjs/opus downloads a prebuilt named after
+# the machine's REAL glibc version (…-linux-x64-glibc-2.41.tar.gz). v0.10.0 only publishes
+# glibc 2.31 and 2.35, so Debian 12/13 gets HTTP 404, it then tries to compile, there is no
+# compiler, the install script fails and Bun deletes the optional package
+# ("Cannot find module '@discordjs/opus'"). Node / ABI tricks do not help with that.
 #
-# Fix: give the install a real Node 22 (binaries exist for it), then
-# scripts/fix-opus-abi.mjs copies that binary to the ABI name Bun looks for (the
-# binary is N-API v3, which is ABI-stable across runtimes). Node is removed afterwards;
-# the bot itself still runs on Bun.
-COPY --from=node:22-slim /usr/local/bin/node /usr/local/bin/node
-
-# Install deps first (better layer caching).
-# scripts/ is needed because package.json has a postinstall hook.
-# Do NOT add --omit=optional: Discord voice needs optional native packages
-# (e.g. @snazzah/davey-linux-x64-gnu) and the bot would crash at startup.
+# Fix: install with --ignore-scripts (the package stays on disk), then
+#   * ffmpeg-static's install.js downloads its ffmpeg binary, and
+#   * scripts/fetch-opus-prebuilt.mjs puts the published glibc-2.31 build (N-API, so it
+#     works on Bun and on newer glibc) exactly where Bun's loader looks for it.
+# No Node.js is needed in the image any more.
 COPY package.json bun.lock ./
 COPY scripts ./scripts
-RUN bun install --frozen-lockfile --production \
+# Do NOT add --omit=optional: Discord voice needs optional native packages
+# (e.g. @snazzah/davey-linux-x64-gnu) and the bot would crash at startup.
+RUN bun install --frozen-lockfile --production --ignore-scripts \
+ && bun node_modules/ffmpeg-static/install.js \
  && ./node_modules/ffmpeg-static/ffmpeg -version | head -1 \
- && bun scripts/fix-opus-abi.mjs \
- && bun -e "const { OpusEncoder } = require('@discordjs/opus'); new OpusEncoder(48000, 2); console.log('native opus OK under bun, ABI', process.versions.modules)" \
- && rm -f /usr/local/bin/node
+ && bun scripts/fetch-opus-prebuilt.mjs \
+ && bun -e "const { OpusEncoder } = require('@discordjs/opus'); new OpusEncoder(48000, 2); console.log('native opus OK under bun, ABI', process.versions.modules)"
 
 COPY tsconfig.json ./
 COPY src ./src
