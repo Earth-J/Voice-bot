@@ -122,7 +122,7 @@ Logs ของ `bot` ควรเห็นตามนี้:
 
 | อาการ | สาเหตุ / วิธีแก้ |
 |---|---|
-| Build log มี error `gyp` / `@discordjs/opus` | ไม่เป็นไร — opus native เป็น optional บน Linux ระบบจะใช้ `opusscript` แทนอัตโนมัติ |
+| Build พังที่ขั้น `native opus OK` / log ขึ้น `[opus] ⚠️ native @discordjs/opus unavailable` | ห้ามปล่อยผ่าน: `opusscript` (WASM) พังเมื่อมี decoder 3 ตัวพร้อมกันบน Bun (`bun scripts/opus-stress.ts` ดูผล) ต้องให้ `@discordjs/opus` โหลดได้ — Dockerfile ดึง Node 22 มาตอน `bun install` เพื่อให้ได้ binary สำเร็จรูป แล้ว `scripts/fix-opus-abi.mjs` copy ให้ตรงชื่อ ABI ที่ Bun หา ถ้าขั้นดาวน์โหลดไม่ได้ binary ให้ดู log ของ `bun install` |
 | `[lavalink] node main error` / `ENOTFOUND lavalink.railway.internal` / `ECONNREFUSED` | เช็กว่า service ชื่อ `lavalink` ตรงตัว, `lavalink` รันอยู่จริง, อยู่ environment เดียวกัน (private network ข้าม environment/project ไม่ได้). Private network ใช้เวลาเริ่มต้นสั้น ๆ หลัง deploy — โค้ดมี retry อยู่แล้ว |
 | `lavalink` boot ไม่ขึ้น `Could not resolve placeholder 'LAVALINK_SERVER_PASSWORD'` | ยังไม่ได้ตั้ง `LAVALINK_SERVER_PASSWORD` บน service `lavalink` (ตั้งใจให้ไม่ boot ถ้าไม่มีรหัส) |
 | `lavalink` boot ไม่ขึ้นเพราะ bind address | ตั้ง `SERVER_ADDRESS=0.0.0.0` บน service `lavalink` |

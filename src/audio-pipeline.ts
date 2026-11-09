@@ -2,9 +2,10 @@
  * Audio pipeline: per-speaker opus stream → PCM → periodic-flush sub-chunks → WAV.
  *
  * Each time Discord's voice receiver reports "speaking start" for a user, we
- * open an opus subscription that auto-ends after configured silence. The opus
- * frames get decoded to PCM (48kHz stereo s16le) by prism.opus.Decoder, then
- * piped to an in-memory buffer.
+ * open an opus subscription that auto-ends after configured silence. Each opus
+ * packet is decoded to PCM (48kHz stereo s16le) by the user's long-lived
+ * OpusDecoder (opus-decoder.ts — NOT one decoder per utterance, that exhausted
+ * the opusscript WASM heap) and appended to an in-memory buffer.
  *
  * Strategy (long-talk safe):
  *   - Keep the opus stream OPEN until actual silence (no force-destroy at maxMs)
@@ -22,8 +23,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import ffmpegStatic from "ffmpeg-static";
-import prism from "prism-media";
 import { analyzePcm, padLeadingSilence } from "./pcm.ts";
+import { isWasmTrap, type OpusDecoder } from "./opus-decoder.ts";
 
 const TMP_DIR = process.env.VOICE_TMP_DIR || join(tmpdir(), "voice-bot-stt");
 const FFMPEG_BIN: string =
@@ -81,14 +82,14 @@ export interface PipelineConfig {
 
 const PCM_RATE = 48_000;
 const PCM_CHANNELS = 2;
-const PCM_FRAME_SIZE = 960;
 
 export function startSpeakerCapture(
   connection: VoiceConnection,
   userId: string,
   config: PipelineConfig,
   onChunk: ChunkHandler,
-  onComplete?: () => void,
+  onComplete: (() => void) | undefined,
+  decoder: OpusDecoder,
 ): void {
   mkdirSync(TMP_DIR, { recursive: true });
 
@@ -100,13 +101,6 @@ export function startSpeakerCapture(
     },
   });
 
-  const pcmDecoder = new prism.opus.Decoder({
-    rate: PCM_RATE,
-    channels: PCM_CHANNELS,
-    frameSize: PCM_FRAME_SIZE,
-  });
-
-  const pcmStream = opusStream.pipe(pcmDecoder);
   let buffers: Buffer[] = [];
   let subChunkStartedAt = Date.now();
   let flushSeq = 0;
@@ -186,21 +180,36 @@ export function startSpeakerCapture(
     void dispatchBuffer(true);
   }, flushIntervalMs);
 
-  pcmStream.on("data", (chunk: Buffer) => {
-    buffers.push(chunk);
+  let decodeErrors = 0;
+  opusStream.on("data", (packet: Buffer) => {
+    try {
+      buffers.push(decoder.decode(packet));
+    } catch (e: any) {
+      // One bad packet must not kill the utterance — skip it. Log only the first few.
+      if (++decodeErrors <= 3) {
+        console.warn(`[audio] opus decode failed user=${userId}:`, e?.message ?? e);
+      }
+      if (isWasmTrap(e)) opusFatal(e);
+    }
   });
 
-  pcmStream.on("end", async () => {
+  // Runs exactly once, whichever of end / error / close happens first.
+  // ('close' also covers streams destroyed without 'end' — e.g. the voice
+  // connection being torn down — which used to leak this interval forever.)
+  let finished = false;
+  const finalize = async (dispatchFinal: boolean): Promise<void> => {
+    if (finished) return;
+    finished = true;
     ended = true;
     clearInterval(flushTimer);
     // Release the speaker slot IMMEDIATELY — before the (slow) encode + STT of
-    // the final chunk. Previously onComplete ran only after STT finished, and
-    // during those 1-3s a new "speaking start" from the same user was ignored
-    // (still marked active) while this opus stream was already closed, so the
-    // first words of the next utterance were lost.
+    // the final chunk, otherwise a new "speaking start" from the same user is
+    // ignored while the old stream is already closed and the first words of the
+    // next utterance are lost.
     try {
       onComplete?.();
     } catch {}
+    if (!dispatchFinal) return;
     // Wait for any in-flight flush, then dispatch final
     while (flushing) {
       await new Promise((r) => setTimeout(r, 50));
@@ -208,17 +217,31 @@ export function startSpeakerCapture(
     if (buffers.length > 0) {
       await dispatchBuffer(false);
     }
-  });
+  };
 
-  pcmStream.on("error", (e: Error) => {
-    ended = true;
-    clearInterval(flushTimer);
-    console.warn(`[audio] decoder error user=${userId}:`, e.message);
-    try {
-      onComplete?.();
-    } catch {}
+  opusStream.on("end", () => void finalize(true));
+  opusStream.on("error", (e: Error) => {
+    console.warn(`[audio] opus stream error user=${userId}:`, e.message);
+    void finalize(false);
   });
+  opusStream.on("close", () => void finalize(false));
 }
+
+/**
+ * The WASM heap is corrupted: no decoder can be created in this process any
+ * more, so staying up just means a bot that silently stops hearing anyone.
+ * Opt-in (OPUS_EXIT_ON_WASM_TRAP=true): exit and let Railway restart the container.
+ */
+let fatalScheduled = false;
+function opusFatal(e: unknown): void {
+  if (fatalScheduled) return;
+  if (process.env.OPUS_EXIT_ON_WASM_TRAP !== "true") return;
+  fatalScheduled = true;
+  console.error("[audio] opus WASM heap is corrupted — exiting so the platform restarts us:", e);
+  setTimeout(() => process.exit(1), 500);
+}
+
+export { opusFatal };
 
 function encodeWav(pcm48kStereo: Buffer, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {

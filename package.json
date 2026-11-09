@@ -10,8 +10,8 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "voice-test": "bun scripts/voice-test.ts",
-    "postinstall": "bash scripts/fix-opus-abi.sh || true",
-    "fix-opus": "bash scripts/fix-opus-abi.sh"
+    "postinstall": "bun scripts/fix-opus-abi.mjs || true",
+    "fix-opus": "bun scripts/fix-opus-abi.mjs"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",

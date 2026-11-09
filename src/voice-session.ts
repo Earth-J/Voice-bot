@@ -23,7 +23,8 @@ import {
 import { unlink } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import { getSfx, type SfxName } from "./sfx.ts";
-import { startSpeakerCapture, type AudioChunk } from "./audio-pipeline.ts";
+import { startSpeakerCapture, opusFatal, type AudioChunk } from "./audio-pipeline.ts";
+import { createOpusDecoder, isWasmTrap, opusBackendName, type OpusDecoder } from "./opus-decoder.ts";
 import { transcribeAndCleanup } from "./stt/index.ts";
 import { emptyUsage, formatUsage, type UsageMetrics } from "./cost.ts";
 
@@ -75,6 +76,11 @@ export class VoiceSession {
   private _state: SessionState = "idle";
   private _connection: VoiceConnection | null = null;
   private _activeSpeakers = new Set<string>();
+  /**
+   * One long-lived opus decoder per listened user (NOT per utterance — churning
+   * through WASM decoders is what corrupted the opusscript heap). Freed on disconnect.
+   */
+  private _decoders = new Map<string, OpusDecoder>();
   /** Bumped on connect + disconnect so late STT results from an old session are ignored. */
   private _epoch = 0;
   private _lastHumanSpeechAt = 0;
@@ -108,6 +114,7 @@ export class VoiceSession {
     this._lastHumanSpeechAt = this.startedAt;
     this.chunkCount = 0;
     this._activeSpeakers.clear();
+    this._freeDecoders();
     this._usage = emptyUsage();
 
     // This bot listens and plays short status sounds (music itself is played by the
@@ -198,16 +205,51 @@ export class VoiceSession {
       if (this._activeSpeakers.has(userId)) return;
       this._activeSpeakers.add(userId);
       try {
-        startSpeakerCapture(conn, userId, cfg, handleChunk, () => {
-          // Only forget the speaker once the underlying opus stream truly
-          // ends, so periodic flushes during one utterance don't drop it.
-          this._activeSpeakers.delete(userId);
-        });
+        startSpeakerCapture(
+          conn,
+          userId,
+          cfg,
+          handleChunk,
+          () => {
+            // Only forget the speaker once the underlying opus stream truly
+            // ends, so periodic flushes during one utterance don't drop it.
+            this._activeSpeakers.delete(userId);
+          },
+          this._getDecoder(userId),
+        );
       } catch (e) {
         this._activeSpeakers.delete(userId);
         console.warn(`[voice-session] startSpeakerCapture failed user=${userId}:`, e);
+        if (isWasmTrap(e)) opusFatal(e);
       }
     });
+  }
+
+  /** The user's decoder, created on first use and reused for every later utterance. */
+  private _getDecoder(userId: string): OpusDecoder {
+    const existing = this._decoders.get(userId);
+    if (existing) return existing;
+    // Only matters when listening to everyone: keep the map bounded by evicting an idle user.
+    const max = envNumber("OPUS_MAX_DECODERS", 8);
+    if (this._decoders.size >= max) {
+      for (const [id, d] of this._decoders) {
+        if (this._activeSpeakers.has(id)) continue;
+        d.destroy();
+        this._decoders.delete(id);
+        break;
+      }
+    }
+    const d = createOpusDecoder();
+    this._decoders.set(userId, d);
+    console.log(
+      `[voice-session] opus decoder created user=${userId} backend=${opusBackendName()} total=${this._decoders.size}`,
+    );
+    return d;
+  }
+
+  private _freeDecoders(): void {
+    for (const d of this._decoders.values()) d.destroy();
+    this._decoders.clear();
   }
 
   /** Play a short status sound in the voice channel. No-op if not connected or the file is missing. */
@@ -283,6 +325,7 @@ export class VoiceSession {
     }
     this._connection = null;
     this._activeSpeakers.clear();
+    this._freeDecoders(); // after destroy(): no more packets can arrive
     this._epoch++; // invalidate any STT still in flight
     this._resetMeta();
     this._state = "idle";
