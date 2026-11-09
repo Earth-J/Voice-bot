@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ffmpegStatic from "ffmpeg-static";
 
-export type SfxName = "play" | "add" | "skip" | "remove" | "stop" | "notfound";
+export type SfxName = "play" | "add" | "skip" | "remove" | "stop" | "notfound" | "lastsong" | "nosong";
 
 export const SFX_FILES: Record<SfxName, string> = {
   play: "playmusic.mp3", //          เริ่มเล่นเพลง
@@ -24,6 +24,8 @@ export const SFX_FILES: Record<SfxName, string> = {
   remove: "removemusicqueue.mp3", // ลบเพลงออกจากคิว
   stop: "stopmusic.mp3", //          หยุดเพลง
   notfound: "notfoundmusic.mp3", //  หาเพลงไม่เจอ / ทำไม่ได้
+  lastsong: "lastsonginqueue.mp3", // กำลังเล่นเพลงสุดท้าย (ไม่มีเพลงเหลือในคิวแล้ว)
+  nosong: "nosonginqueue.mp3", //     เพลงหมดแล้วทั้งคิวและเพลงปัจจุบัน
 };
 
 const FFMPEG = process.env.FFMPEG_PATH || (ffmpegStatic as unknown as string) || "ffmpeg";

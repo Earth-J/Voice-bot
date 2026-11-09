@@ -57,6 +57,20 @@ function buildEarthCommand(name: string, description: string) {
       sub
         .setName("unstay")
         .setDescription("ปิด persistent mode — auto-leave กลับมาทำงานปกติ"),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("setup")
+        .setDescription("ตั้งห้องเพลง — พิมพ์ชื่อเพลงในห้องนั้นได้เลย (ไม่ต้องมี prefix) + embed คิวอยู่ในห้องนั้น")
+        .addStringOption((opt) =>
+          opt
+            .setName("channel-id")
+            .setDescription("Text channel ID ของห้องเพลง (ไม่ใส่ = ห้องที่พิมพ์คำสั่งนี้)")
+            .setRequired(false),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub.setName("unsetup").setDescription("ยกเลิกห้องเพลง (กลับไปใช้ห้อง QUEUE_CHANNEL_ID)"),
     );
 }
 
@@ -94,6 +108,15 @@ const cstayCommand = aliasBase("estay", "alias: /earth stay — keep Earth in ch
   );
 const cunstayCommand = aliasBase("eunstay", "alias: /earth unstay — turn off persistent mode");
 
+const csetupCommand = aliasBase("esetup", "alias: /earth setup — set the music room").addStringOption(
+  (opt) =>
+    opt
+      .setName("channel-id")
+      .setDescription("Text channel ID (default: this channel)")
+      .setRequired(false),
+);
+const cunsetupCommand = aliasBase("eunsetup", "alias: /earth unsetup — remove the music room");
+
 export const earthCommand = buildEarthCommand(
   "earth",
   "Earth — ฟังเสียงในห้อง voice + เปิดเพลง YouTube ตามคำสั่งเสียง",
@@ -110,6 +133,8 @@ export const ALIAS_TO_SUBCOMMAND: Readonly<Record<string, string>> = {
   evo: "leave",
   estay: "stay",
   eunstay: "unstay",
+  esetup: "setup",
+  eunsetup: "unsetup",
 };
 
 export const YOI_BASE_NAMES = new Set(["earth", "ear"]);
@@ -126,4 +151,6 @@ export const commands = [
   cvoCommand,
   cstayCommand,
   cunstayCommand,
+  csetupCommand,
+  cunsetupCommand,
 ];

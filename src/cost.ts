@@ -1,10 +1,11 @@
 /**
- * Per-session STT usage report (Groq Whisper).
+ * Per-session STT usage report.
  *
  * Only audio seconds + request counts are tracked. If you want a rough cost
  * estimate in the report, set GROQ_STT_USD_PER_HOUR (see Groq's pricing page)
  * and the report will show audio-seconds x that rate.
  */
+
 export interface UsageMetrics {
   sttCallCount: number;
   sttFailedCount: number;
@@ -17,11 +18,11 @@ export function emptyUsage(): UsageMetrics {
 }
 
 export function formatUsage(m: UsageMetrics): string {
-  const model = process.env.GROQ_STT_MODEL || "whisper-large-v3";
+  const label = `groq: ${process.env.GROQ_STT_MODEL || "whisper-large-v3"}`;
   const lines = [
     `STT: ${Math.round(m.sttAudioSec)}s audio, ${m.sttCallCount} calls` +
       (m.sttFailedCount > 0 ? ` (${m.sttFailedCount} failed)` : "") +
-      ` [groq: ${model}]`,
+      ` [${label}]`,
   ];
   const rate = Number(process.env.GROQ_STT_USD_PER_HOUR);
   if (Number.isFinite(rate) && rate > 0) {

@@ -10,7 +10,7 @@ GitHub repo ──► Railway project
                         └── private network:  lavalink.railway.internal:2333  (ไม่ต้องเปิดโดเมนสาธารณะ)
 ```
 
-- `bot` ต่อออกไปหา Discord และ Groq เอง
+- `bot` ต่อออกไปหา Discord และ Groq (API ถอดเสียง) เอง
 - `bot` คุยกับ `lavalink` ผ่าน private network ของ Railway เท่านั้น
 
 ---
@@ -20,7 +20,8 @@ GitHub repo ──► Railway project
 - บัญชี Railway (แนะนำ Hobby — Lavalink เป็น Java กินแรมประมาณครึ่ง GB ขึ้นไป ส่วน Free plan จำกัด 0.5 GB ต่อ service อาจไม่พอ)
 - บัญชี GitHub
 - Discord: bot 2 ตัว (ตัวฟัง = `DISCORD_TOKEN`, ตัวเพลง = `MUSIC_BOT_TOKEN`) เชิญเข้าเซิร์ฟเวอร์แล้ว
-- Groq API key
+- Discord Developer Portal → บอทฟัง → Bot → เปิด **Message Content Intent** (ใช้อ่านชื่อเพลงที่พิมพ์ในห้องเพลง `/earth setup`) — ไม่เปิดบอทจะ login ไม่ผ่าน
+- Groq API key (`GROQ_API_KEY`) จาก [console.groq.com](https://console.groq.com)
 
 > ⚠️ **ห้ามเอา `.env` ขึ้น GitHub** (`.gitignore` กันไว้แล้ว และซิปเวอร์ชันนี้ไม่มี `.env`)
 > ถ้าเคยส่ง/อัปโหลดไฟล์ `.env` เดิมไปที่ไหน แนะนำกด Reset Token ของบอททั้งสองตัวใน Developer Portal
@@ -100,12 +101,14 @@ LAVALINK_SECURE=false
 
 จากนั้นกด **Deploy** (Railway จะ build จาก `Dockerfile` ที่ root ให้เอง)
 
+**ถ้าจะใช้ห้องเพลง (`/earth setup`):** บอทเก็บห้องที่ตั้งไว้ใน `/app/data/setup.json` แต่ไฟล์ใน container ของ Railway หายทุกครั้งที่ deploy ใหม่ — ไปที่ service `bot` → **Settings → Volumes → New Volume** แล้วตั้ง Mount Path เป็น `/app/data` (หรือกำหนดโฟลเดอร์เองด้วย `DATA_DIR`)
+
 ## 5) เช็กว่าทำงาน
 
 Logs ของ `bot` ควรเห็นตามนี้:
 
 ```
-[earth-voice] starting... STT=groq (...)
+[earth-voice] starting... STT=groq (whisper-large-v3, lang=th)
 [lavalink] music bot logged in as <ชื่อบอทเพลง>
 [lavalink] node main ready
 [earth-voice] Earth ready — logged in as <ชื่อบอทฟัง> (id=...)

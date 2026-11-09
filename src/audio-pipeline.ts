@@ -10,7 +10,8 @@
  *   - Keep the opus stream OPEN until actual silence (no force-destroy at maxMs)
  *   - Every `chunkFlushMs` ms, snapshot current buffer → encode WAV → dispatch
  *     to onChunk, then reset buffer and continue capturing
- *   - On stream 'end' (silence reached): final flush + onComplete callback
+ *   - On stream 'end' (silence reached): onComplete fires FIRST (frees the speaker
+ *     slot so the next utterance isn't missed), then the final flush runs
  *
  * This avoids the "lost audio after 30s" bug where destroying the stream
  * mid-utterance dropped frames until Discord re-emitted "speaking start".
@@ -22,6 +23,7 @@ import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import ffmpegStatic from "ffmpeg-static";
 import prism from "prism-media";
+import { analyzePcm, padLeadingSilence } from "./pcm.ts";
 
 const TMP_DIR = process.env.VOICE_TMP_DIR || join(tmpdir(), "voice-bot-stt");
 const FFMPEG_BIN: string =
@@ -60,6 +62,21 @@ export interface PipelineConfig {
    * snapshots that will get more audio appended on the next flush cycle.
    */
   minFinalChunkMs?: number;
+  /**
+   * Silence prepended to every chunk before it is sent to Whisper (default 400ms).
+   * Whisper often drops the first word when a clip starts abruptly; a short
+   * lead-in fixes that. Set 0 to disable.
+   */
+  leadingSilenceMs?: number;
+  /**
+   * Chunks with less than this much speech-like audio (see analyzePcm — high-passed,
+   * so wind rumble doesn't count) are dropped without calling STT (default 200ms).
+   * Unlike minFinalChunkMs this measures real audio, not wall-clock time, so short
+   * commands ("ข้าม", "หยุด") survive while wind gusts / mic bumps are dropped.
+   */
+  minVoicedMs?: number;
+  /** Frame RMS (16-bit scale) at which a 20ms frame counts as voiced (default 300). */
+  voicedFrameRms?: number;
 }
 
 const PCM_RATE = 48_000;
@@ -98,6 +115,9 @@ export function startSpeakerCapture(
 
   const flushIntervalMs = config.chunkFlushMs ?? 8_000;
   const minFinalChunkMs = config.minFinalChunkMs ?? 1_500;
+  const leadingSilenceMs = config.leadingSilenceMs ?? 400;
+  const minVoicedMs = config.minVoicedMs ?? 200;
+  const voicedFrameRms = config.voicedFrameRms ?? 300;
 
   const dispatchBuffer = async (isPartial: boolean): Promise<void> => {
     if (buffers.length === 0) return;
@@ -120,12 +140,27 @@ export function startSpeakerCapture(
       flushing = false;
       return;
     }
+    // Noise gate: don't spend an STT call (and risk a hallucinated "command") on
+    // wind / mic bumps / room noise. Measured on the audio itself, high-passed.
+    const stats = analyzePcm(pcm, PCM_RATE, PCM_CHANNELS, { minFrameRms: voicedFrameRms });
+    const verdict = stats.voicedMs < minVoicedMs ? "drop" : "keep";
+    console.log(
+      `[audio] ${verdict} user=${userId} audio=${Math.round(stats.audioMs)}ms ` +
+        `voiced=${stats.voicedMs}ms (min ${minVoicedMs}) maxRms=${stats.maxFrameRms} (frame>=${voicedFrameRms})`,
+    );
+    if (verdict === "drop") {
+      flushing = false;
+      return;
+    }
     const wavPath = join(
       TMP_DIR,
       `${startedAt}_${userId}_p${flushSeq}.wav`,
     );
     try {
-      await encodeWav(pcm, wavPath);
+      await encodeWav(
+        padLeadingSilence(pcm, leadingSilenceMs, PCM_RATE, PCM_CHANNELS),
+        wavPath,
+      );
       const chunk: AudioChunk = {
         userId,
         wavPath,
@@ -158,6 +193,14 @@ export function startSpeakerCapture(
   pcmStream.on("end", async () => {
     ended = true;
     clearInterval(flushTimer);
+    // Release the speaker slot IMMEDIATELY — before the (slow) encode + STT of
+    // the final chunk. Previously onComplete ran only after STT finished, and
+    // during those 1-3s a new "speaking start" from the same user was ignored
+    // (still marked active) while this opus stream was already closed, so the
+    // first words of the next utterance were lost.
+    try {
+      onComplete?.();
+    } catch {}
     // Wait for any in-flight flush, then dispatch final
     while (flushing) {
       await new Promise((r) => setTimeout(r, 50));
@@ -165,9 +208,6 @@ export function startSpeakerCapture(
     if (buffers.length > 0) {
       await dispatchBuffer(false);
     }
-    try {
-      onComplete?.();
-    } catch {}
   });
 
   pcmStream.on("error", (e: Error) => {

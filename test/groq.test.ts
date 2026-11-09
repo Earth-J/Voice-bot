@@ -6,7 +6,7 @@ import { join } from "node:path";
 // Env must be set before the module is imported (it reads config at load).
 process.env.GROQ_API_KEY = "test-key";
 process.env.GROQ_STT_RETRY_BASE_MS = "1";
-const { transcribeGroq } = await import("../src/stt/groq.ts");
+const { transcribeGroq, dropNoiseSegments } = await import("../src/stt/groq.ts");
 
 const dir = mkdtempSync(join(tmpdir(), "groq-test-"));
 const wav = join(dir, "chunk.wav");
@@ -59,5 +59,51 @@ describe("transcribeGroq", () => {
     const calls = mockFetch([new Response("bad key", { status: 401 })]);
     await expect(transcribeGroq(wav)).rejects.toThrow("HTTP 401");
     expect(calls()).toBe(1);
+  });
+});
+
+describe("dropNoiseSegments", () => {
+  const good = { text: " เปิดเพลง", no_speech_prob: 0.02, avg_logprob: -0.3, compression_ratio: 1.1 };
+  const noise = { text: " ขอบคุณที่รับชม", no_speech_prob: 0.91, avg_logprob: -1.6, compression_ratio: 1.0 };
+
+  test("drops a segment Whisper itself thinks is not speech", () => {
+    const r = dropNoiseSegments([noise], "ขอบคุณที่รับชม");
+    expect(r.text).toBe("");
+    expect(r.dropped).toHaveLength(1);
+  });
+
+  test("keeps the real speech and drops only the noisy segment", () => {
+    const r = dropNoiseSegments([good, noise], "unused");
+    expect(r.text).toBe("เปิดเพลง");
+    expect(r.dropped).toHaveLength(1);
+  });
+
+  test("needs BOTH high no_speech_prob and low avg_logprob", () => {
+    const unsureButConfident = { ...noise, avg_logprob: -0.4 };
+    const lowLogprobOnly = { ...noise, no_speech_prob: 0.1 };
+    expect(dropNoiseSegments([unsureButConfident], "x").text).toBe("ขอบคุณที่รับชม");
+    expect(dropNoiseSegments([lowLogprobOnly], "x").text).toBe("ขอบคุณที่รับชม");
+  });
+
+  test("drops repetition loops by compression ratio", () => {
+    const loop = { ...good, compression_ratio: 3.2 };
+    expect(dropNoiseSegments([loop], "x").text).toBe("");
+  });
+
+  test("no segment data → plain text is returned unchanged", () => {
+    expect(dropNoiseSegments(undefined, " สวัสดี ").text).toBe("สวัสดี");
+    expect(dropNoiseSegments([], " สวัสดี ").text).toBe("สวัสดี");
+    expect(dropNoiseSegments([{ text: " หวัดดี" }], "x").text).toBe("หวัดดี");
+  });
+
+  test("transcribeGroq applies the filter to a verbose_json response", async () => {
+    mockFetch([
+      new Response(
+        JSON.stringify({ text: " เปิดเพลง ขอบคุณที่รับชม", language: "thai", duration: 3, segments: [good, noise] }),
+        { status: 200 },
+      ),
+    ]);
+    const r = await transcribeGroq(wav);
+    expect(r.text).toBe("เปิดเพลง");
   });
 });

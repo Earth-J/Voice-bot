@@ -7,6 +7,11 @@
  *   1. fix artists Whisper keeps mishearing (ARTIST_ALIASES),
  *   2. turn "<song> ของ <artist>" into "<artist> <song>",
  *   3. only accept a result whose title really contains the song name.
+ *
+ * A pasted YouTube link skips all of that: it is turned into a canonical watch URL and loaded
+ * directly (no search, no title matching — the link already says exactly which video).
+ * A playlist link (youtube.com/playlist?list=…) is turned into a canonical playlist URL; the
+ * music backend queues every playable song in it.
  */
 
 /** What Whisper writes → what YouTube knows. Add more as you see them in the console log. */
@@ -23,16 +28,57 @@ const ARTIST_ALIASES: [RegExp, string][] = [
 /** " ของ " / " ของวง " / " ของศิลปิน " with spaces around it = "by <artist>". */
 const OF_RE = /\s+ของ(?:วง|ศิลปิน|นักร้อง)?\s+/g;
 
+/**
+ * YouTube link → canonical `https://www.youtube.com/watch?v=<id>`, or null when there is none.
+ * Understands watch?v=, youtu.be/, shorts/, live/, embed/ and music.youtube.com, with or
+ * without "https://". Only the 11-char video id is kept, so tracking params (si=, t=) and
+ * `&list=` are dropped — a link copied from inside a playlist plays just that one video.
+ */
+const YT_LINK_RE =
+  /(?<![\w.-])(?:https?:\/\/)?(?:(?:www|m|music)\.)?(?:youtube\.com\/(?:watch\?(?:[^\s#]*&)?v=|shorts\/|live\/|embed\/|v\/)|youtu\.be\/)([\w-]{11})(?![\w-])/i;
+
+export function extractYouTubeUrl(text: string): string | null {
+  const m = YT_LINK_RE.exec(text);
+  return m ? `https://www.youtube.com/watch?v=${m[1]}` : null;
+}
+
+/**
+ * Playlist link → canonical `https://www.youtube.com/playlist?list=<id>`, or null.
+ * Only for links that point at the playlist itself (`/playlist?list=` or `watch?list=` with no
+ * video id). A `watch?v=<id>&list=…` link is a VIDEO link — extractYouTubeUrl wins and plays
+ * just that one video — so check extractYouTubeUrl first.
+ */
+const YT_PLAYLIST_RE =
+  /(?<![\w.-])(?:https?:\/\/)?(?:(?:www|m|music)\.)?youtube\.com\/(?:playlist|watch)\?(?:[^\s#]*&)?list=([\w-]{10,64})(?![\w-])/i;
+
+export function extractYouTubePlaylistUrl(text: string): string | null {
+  const m = YT_PLAYLIST_RE.exec(text);
+  return m ? `https://www.youtube.com/playlist?list=${m[1]}` : null;
+}
+
 export interface MusicQuery {
   /** Song name (or the whole query when no artist was given). */
   song: string;
   /** Artist, when the request had the "<song> ของ <artist>" form. */
   artist: string | null;
-  /** Search strings to try, best first. */
+  /** Set when the request was a YouTube link: the canonical URL, to be loaded as-is (no search). */
+  directUrl: string | null;
+  /** Set when the request was a YouTube playlist link: the canonical playlist URL. */
+  playlistUrl: string | null;
+  /** Search strings to try, best first (just the URL when `directUrl` / `playlistUrl` is set). */
   searches: string[];
 }
 
 export function parseMusicQuery(raw: string): MusicQuery {
+  const directUrl = extractYouTubeUrl(raw);
+  if (directUrl) {
+    return { song: directUrl, artist: null, directUrl, playlistUrl: null, searches: [directUrl] };
+  }
+  const playlistUrl = extractYouTubePlaylistUrl(raw);
+  if (playlistUrl) {
+    return { song: playlistUrl, artist: null, directUrl: null, playlistUrl, searches: [playlistUrl] };
+  }
+
   let text = raw.normalize("NFC");
   for (const [re, fix] of ARTIST_ALIASES) text = text.replace(re, fix);
   text = text.replace(/\s+/g, " ").trim();
@@ -51,7 +97,7 @@ export function parseMusicQuery(raw: string): MusicQuery {
   }
 
   const searches = artist ? [`${artist} ${song}`, `${song} ${artist}`] : [text];
-  return { song, artist, searches };
+  return { song, artist, directUrl: null, playlistUrl: null, searches };
 }
 
 /** Lowercase, drop punctuation, keep letters/Thai marks/digits. */
@@ -79,6 +125,11 @@ export interface LavalinkCandidate {
   info: { title: string; author?: string; isStream: boolean; length: number };
 }
 
+/** Drop livestreams and anything longer than `maxMs` — what the bot refuses to play. */
+export function filterPlayable<T extends LavalinkCandidate>(candidates: T[], maxMs: number): T[] {
+  return candidates.filter((t) => !t.info.isStream && t.info.length <= maxMs);
+}
+
 /**
  * Pick the track to play from Lavalink's search results.
  * - No artist given → first playable result (old behavior).
@@ -91,7 +142,7 @@ export function pickCandidate<T extends LavalinkCandidate>(
   q: MusicQuery,
   maxMs: number,
 ): T | null {
-  const playable = candidates.filter((t) => !t.info.isStream && t.info.length <= maxMs);
+  const playable = filterPlayable(candidates, maxMs);
   if (!q.artist) return playable[0] ?? null;
 
   let best: T | null = null;

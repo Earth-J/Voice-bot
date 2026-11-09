@@ -1,10 +1,10 @@
 # Earth Voice Bot — STT + YouTube music
 
-บอท Discord ที่เข้าห้อง voice แล้ว **ฟังเสียง (Groq Whisper)** และ **เงียบตลอด**
+บอท Discord ที่เข้าห้อง voice แล้ว **ฟังเสียง (Whisper ผ่าน Groq)** และ **เงียบตลอด**
 จนกว่าจะมีคนพูดว่า
 
 ```
-earth/jarvis เปิดเพลง <ชื่อเพลง>
+earth เปิดเพลง <ชื่อเพลง>
 ```
 
 บอทเพลง (Lavalink) จะเข้าห้องเดียวกัน ค้นใน YouTube แล้วเล่นผลแรก (สั่งใหม่ = เปลี่ยนเพลง)
@@ -38,7 +38,9 @@ bun run start
 
 ### Discord Developer Portal
 
-- บอทฟัง: เชิญด้วยสิทธิ์ `Connect`, `View Channels`, `Use Application Commands` (ไม่ต้องเปิด Privileged Intent)
+- บอทฟัง: เชิญด้วยสิทธิ์ `Connect`, `View Channels`, `Use Application Commands`
+  - ห้องเพลง (`/earth setup`): เพิ่ม `Send Messages`, `Embed Links`, `Read Message History` ในห้องนั้น (+ `Manage Messages` ถ้าอยากให้บอทลบข้อความที่พิมพ์ขอเพลง)
+  - ต้องเปิด **Message Content Intent** (Developer Portal → Bot → Privileged Gateway Intents) — ไม่เปิดบอทจะ login ไม่ผ่าน (`Used disallowed intents`)
 - บอทเพลง: สร้าง application ใหม่อีกอัน เชิญเข้าเซิร์ฟเวอร์เดียวกันด้วย `Connect`, `Speak`, `View Channels`
 
 ### .env ที่จำเป็น
@@ -67,11 +69,11 @@ bun run start
 ## ใช้งาน
 
 1. เข้า voice channel → `/earth join`
-2. พูดว่า `earth/jarvis เปิดเพลง <ชื่อเพลง>` (ออกเสียงเป็น "เอิร์ธ" / "จาร์วิส" ก็ได้)
-3. พูดว่า `earth/jarvis เงียบ` หรือ `earth/jarvis เงียบหน่อย` เพื่อหยุดเพลง (หรือ `/earth stop`) / `/earth leave` ออก
+2. พูดว่า `earth เปิดเพลง <ชื่อเพลง>` (ออกเสียงเป็น "เอิร์ธ" ก็ได้)
+3. พูดว่า `earth เงียบ` หรือ `earth เงียบหน่อย` เพื่อหยุดเพลง (หรือ `/earth stop`) / `/earth leave` ออก
 
 เอิร์ธฟังเฉพาะ user ใน `LISTEN_USER_IDS` (ค่าเริ่มต้น `918384557131173988`) — เสียงคนอื่นไม่ถูกจับและไม่ถูกส่งไปถอดความ
-คำสั่งเสียง: `earth/jarvis เปิดเพลง <ชื่อ>` / `earth/jarvis เงียบ` (`เงียบหน่อย` / `stop` — หยุดเพลง + ล้างคิว) / `earth/jarvis เพิ่มเสียง` / `earth/jarvis เบาเสียง` (ทีละ 5%, 0–100%) / `earth/jarvis เพิ่มเพลง <ชื่อ>` (ต่อคิว) / `earth/jarvis ข้าม` (`skip` — ข้ามเพลง) / `earth/jarvis แสดงคิว` (ส่ง embed คิวใหม่ลงห้อง `QUEUE_CHANNEL_ID`) / `earth/jarvis ลบคิว <เลขลำดับ>` / `earth/jarvis เตะผม` / `earth/jarvis ออก` (ตัดคนพูดออกจากห้อง voice — บอทฟังต้องมีสิทธิ์ **Move Members**)
+คำสั่งเสียง: `earth เปิดเพลง <ชื่อ>` / `earth เงียบ` (`เงียบหน่อย` / `stop` — หยุดเพลง + ล้างคิว) / `earth เพิ่มเสียง` / `earth เบาเสียง` (ทีละ 5%, 0–100%) / `earth เพิ่มเพลง <ชื่อ>` (ต่อคิว) / `earth ข้าม` (`skip` — ข้ามเพลง) / `earth แสดงคิว` (ส่ง embed คิวใหม่ลงห้อง `QUEUE_CHANNEL_ID`) / `earth ลบคิว <เลขลำดับ>` / `earth เตะผม` (ตัดคนพูดออกจากห้อง voice — บอทฟังต้องมีสิทธิ์ **Move Members**)
 
 | คำสั่ง | ทำอะไร |
 |---|---|
@@ -80,9 +82,11 @@ bun run start
 | `/earth stop` | หยุดเพลง |
 | `/earth status` | state, เพลงที่เล่นอยู่, STT usage |
 | `/earth stay [hours]` / `unstay` | ปิด/เปิด auto-leave |
+| `/earth setup [channel-id]` | ตั้งห้องเพลง (ไม่ใส่ id = ห้องที่พิมพ์คำสั่ง) — ดูหัวข้อ "ห้องเพลง" |
+| `/earth unsetup` | ยกเลิกห้องเพลง |
 | `/earth help` | รายการคำสั่ง |
 
-alias: `/ej` `/el` `/est` `/estop` `/eh` `/evi` `/evo` `/estay` `/eunstay` และ `/ear …`
+alias: `/ej` `/el` `/est` `/estop` `/eh` `/evi` `/evo` `/estay` `/eunstay` `/esetup` `/eunsetup` และ `/ear …`
 
 ออกทันทีเมื่อในห้องไม่เหลือคนจริง ๆ (ไม่นับบอท, หน่วง `ALONE_LEAVE_DELAY_MS` default 2 วิ) / `/earth stay` เพื่อข้าม
 
@@ -90,9 +94,19 @@ Embed คิว: เริ่มเล่นเพลง → สร้าง emb
 
 Auto-leave สำรอง: อยู่คนเดียว 5 นาที (ไม่มี auto-leave เพราะเงียบ) / `/earth stay` เพื่อข้าม
 
+### ห้องเพลง (`/earth setup`)
+
+`/earth setup channel-id:<id ห้องข้อความ>` (หรือพิมพ์ในห้องนั้นโดยไม่ใส่ id)
+
+- วางลิงก์ YouTube ได้เหมือนพิมพ์ชื่อเพลง: ลิงก์คลิป (`youtube.com/watch?v=…`, `youtu.be/…`, `music.youtube.com`, shorts) เล่นคลิปนั้นตรง ๆ ไม่ค้นหา (ตัด `si=` / `t=` / `list=` ทิ้ง เล่นเฉพาะคลิปเดียว) ส่วนลิงก์เพลย์ลิสต์ (`youtube.com/playlist?list=…`) จะเพิ่มทั้งเพลย์ลิสต์: ไม่มีเพลงเล่น = เพลงแรกเล่นทันที ที่เหลือต่อคิว, มีเพลงเล่นอยู่ = ต่อคิวทั้งหมด จนคิวเต็ม (`MUSIC_MAX_QUEUE`, ค่าเริ่มต้น 50) — ข้ามไลฟ์สดและคลิปที่ยาวเกิน `MUSIC_MAX_MINUTES`
+- พิมพ์ชื่อเพลงในห้องนั้นได้เลย **ไม่ต้องมี prefix/คำปลุก** — ไม่มีเพลงเล่น = เล่นทันที, มีเพลงเล่นอยู่ = ต่อคิว (ข้อความที่พิมพ์จะถูกลบถ้าบอทมีสิทธิ์ Manage Messages; ปิดได้ด้วย `SETUP_DELETE_MESSAGES=false`)
+- ผู้พิมพ์ต้องอยู่ voice channel เดียวกับเอิร์ธ ถ้าเอิร์ธยังไม่อยู่ห้องไหน เฉพาะ `DC_OWNER_IDS` ที่พิมพ์แล้วเอิร์ธจะตามเข้าห้องให้
+- embed คิว (รวมตอนสั่งด้วยเสียง) ย้ายมาอยู่ห้องนี้แทน `QUEUE_CHANNEL_ID` เป็นข้อความเดียวถาวรที่ถูก edit — ไม่มีเพลงก็ไม่ลบ แค่เปลี่ยนเป็นหน้า idle
+- ค่าที่ตั้งเก็บไว้ที่ `DATA_DIR/setup.json` (default `./data/setup.json`) — บน Railway ต้องผูก Volume ไว้ที่ `/app/data` ไม่งั้นต้อง `/earth setup` ใหม่ทุกครั้งที่ deploy
+
 ## ความเป็นส่วนตัว
 
-- เสียงถูกส่งไป Groq API เพื่อถอดความ แล้วไฟล์ชั่วคราวถูกลบทันที — แจ้งคนในห้องก่อนเสมอ
+- เสียงถูกส่งไปที่ Groq (API ถอดเสียง) แล้วไฟล์ชั่วคราวถูกลบทันที — แจ้งคนในห้องก่อนเสมอ
 - ข้อความที่ถอดได้ใช้แค่ตรวจว่าเป็นคำสั่งเปิดเพลงไหม แล้วทิ้ง (แสดงใน console log เท่านั้น)
 
 ## พัฒนา

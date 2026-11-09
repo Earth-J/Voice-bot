@@ -3,9 +3,9 @@
  *
  * Lifecycle:  idle → connecting → listening → leaving → idle
  *
- * Earth listens to everyone in the channel (audio-pipeline.ts → Groq Whisper).
+ * Earth listens to everyone in the channel (audio-pipeline.ts → Whisper STT).
  * Transcribed text is NOT stored anywhere — it is handed to `onSpeech`, which
- * decides whether it was a command ("earth/jarvis เปิดเพลง ..."). Otherwise it is dropped.
+ * decides whether it was a command ("earth เปิดเพลง ..."). Otherwise it is dropped.
  */
 import {
   joinVoiceChannel,
@@ -26,6 +26,14 @@ import { getSfx, type SfxName } from "./sfx.ts";
 import { startSpeakerCapture, type AudioChunk } from "./audio-pipeline.ts";
 import { transcribeAndCleanup } from "./stt/index.ts";
 import { emptyUsage, formatUsage, type UsageMetrics } from "./cost.ts";
+
+/** Numeric env var with a fallback; unlike `Number(x) || d` this lets 0 through. */
+function envNumber(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
 
 export type SessionState = "idle" | "connecting" | "listening" | "leaving";
 
@@ -167,6 +175,11 @@ export class VoiceSession {
       chunkFlushMs: Number(process.env.CHUNK_FLUSH_MS) || 8_000,
       minFinalChunkMs:
         args.minFinalChunkMs ?? (Number(process.env.MIN_FINAL_CHUNK_MS) || 1_500),
+      // Lead-in silence so Whisper doesn't clip an abrupt first word. 0 disables.
+      leadingSilenceMs: envNumber("LEADING_SILENCE_MS", 400),
+      // Noise gate (wind / mic bumps): chunks with < minVoicedMs of speech-like audio are skipped. 0 disables.
+      minVoicedMs: envNumber("MIN_VOICED_MS", 200),
+      voicedFrameRms: envNumber("VOICED_FRAME_RMS", 300),
     };
 
     const handleChunk = async (chunk: AudioChunk): Promise<void> => {

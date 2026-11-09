@@ -6,5 +6,7 @@ Put the status sound files here (names must match exactly):
   removemusicqueue.mp3   ลบเพลงออกจากคิว
   stopmusic.mp3          หยุดเพลง
   notfoundmusic.mp3      หาเพลงไม่เจอ / ทำไม่ได้
+  lastsonginqueue.mp3    กำลังเล่นเพลงสุดท้าย (คิวว่างแล้ว) — เล่นตอนเพลงเดินต่อจากคิวเอง
+  nosonginqueue.mp3      เพลงหมดแล้วทั้งคิวและเพลงปัจจุบัน — เล่นตอนเพลงจบเอง
 
 Keep each one short (max 10 seconds).
