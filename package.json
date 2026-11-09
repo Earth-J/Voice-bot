@@ -10,6 +10,7 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "voice-test": "bun scripts/voice-test.ts",
+    "check-stop": "bun scripts/check-stop-command.ts",
     "postinstall": "bun scripts/fix-opus-abi.mjs || true",
     "fix-opus": "bun scripts/fix-opus-abi.mjs"
   },

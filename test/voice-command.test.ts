@@ -61,6 +61,22 @@ describe("parseVoiceCommand", () => {
     expect(parseVoiceCommand("เอิร์ธ เปิดเพลง Lemon")).toEqual({ kind: "play", query: "Lemon" });
   });
 
+  test("stop command: หุบปาก and the ways Whisper might mishear it", () => {
+    for (const said of [
+      "เอิร์ธ หุบปาก",
+      "เอิร์ธ หุบปากหน่อย",
+      "เอิร์ธ ช่วยหุบปากหน่อย",
+      "เอิร์ธ ขอหุบปากที",
+      "เอิร์ธหุบปาก", // ติดกันไม่มีช่องว่าง
+      "เอิร์ธ หูบปาก", // ุ/ู สับสน
+      "Earth หุบปากครับ",
+    ]) {
+      expect(parseVoiceCommand(said)).toEqual({ kind: "stop" });
+    }
+    expect(parseVoiceCommand("หุบปาก")).toBeNull(); // no wake word
+    expect(parseVoiceCommand("เอิร์ธ อ้าปาก")).toBeNull(); // different word, not a stop
+  });
+
   test("stop command (english backup)", () => {
     expect(parseVoiceCommand("earth stop")).toEqual({ kind: "stop" });
     expect(parseVoiceCommand("Earth, stop.")).toEqual({ kind: "stop" });
