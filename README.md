@@ -51,6 +51,7 @@ bun run start
 | `DISCORD_GUILD_ID` | guild หลัก (fallback เมื่อสั่งจาก DM) |
 | `DC_OWNER_IDS` | Discord user ID ที่ใช้คำสั่งได้ (คั่นด้วย `,`) |
 | `GROQ_API_KEY` | จาก [console.groq.com](https://console.groq.com) |
+| `GROQ_API_KEYS` *(ไม่บังคับ)* | Groq key เพิ่มเติม คั่นด้วย `,` — แต่ละ key มีโควตาแยก ติด limit (429) แล้วสลับไป key ถัดไปเอง ต้องเป็น key จากคนละบัญชี Groq (โควตานับต่อ organization) key ที่ 401/403 จะถูกข้ามจนกว่าจะรีสตาร์ท |
 | `MUSIC_BOT_TOKEN` | token ของบอทเพลงตัวที่สอง |
 | `GEMINI_API_KEY` *(ไม่บังคับ)* | key หลักของ Gemini — แก้ชื่อเพลงที่ Whisper ฟังเพี้ยน (ไม่ใส่ = ปิดฟีเจอร์) |
 | `GEMINI_API_KEY_BACKUP` *(ไม่บังคับ)* | key สำรอง — สลับไปใช้ทันทีเมื่อ key หลักติด limit (429) |
