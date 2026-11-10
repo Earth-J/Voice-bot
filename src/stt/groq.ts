@@ -6,7 +6,13 @@
  * are retried a few times before giving up.
  *
  * Env:
- *   GROQ_API_KEY            required
+ *   GROQ_API_KEY            required (unless GROQ_API_KEYS is set)
+ *   GROQ_API_KEYS           optional extra keys, comma / space / newline separated. Each key
+ *                           gets its own rate limiter, so N keys ≈ N× the requests per minute.
+ *                           Groq counts quota per ORGANIZATION, so the keys must come from
+ *                           different Groq accounts — a 2nd key from the same account shares
+ *                           the same quota and does not help. A key that answers 401/403 is
+ *                           skipped until the bot restarts.
  *   GROQ_STT_MODEL          default "whisper-large-v3"
  *   GROQ_STT_LANGUAGE       default "th"; set "auto" to let Whisper detect
  *   GROQ_STT_PROMPT         hint to help Whisper spell the wake word; default
@@ -63,6 +69,24 @@ const COMPRESSION_MAX = envNum("GROQ_COMPRESSION_MAX", 2.4);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// ─── API keys ────────────────────────────────────────────────────────────────
+
+/**
+ * Every configured Groq key, preferred first: GROQ_API_KEY, then GROQ_API_KEYS.
+ * Read per call (like activePrompt) so env changes and tests take effect.
+ */
+export function groqApiKeys(): string[] {
+  const raw = `${process.env.GROQ_API_KEY ?? ""},${process.env.GROQ_API_KEYS ?? ""}`;
+  const keys = raw
+    .split(/[\s,;]+/)
+    .map((k) => k.trim().replace(/^["']+|["']+$/g, ""))
+    .filter(Boolean);
+  return [...new Set(keys)];
+}
+
+/** Keys Groq rejected with 401/403 — skipped until restart so we don't keep hitting them. */
+const deadKeys = new Set<string>();
+
 // ─── Client-side rate limiting ───────────────────────────────────────────────
 
 /** Read per call (like activePrompt) so env changes and tests take effect. */
@@ -79,14 +103,15 @@ function limitConfig() {
 }
 type LimitConfig = ReturnType<typeof limitConfig>;
 
-// One limiter per model, shared by every voice session in the process
+// One limiter per (API key, model), shared by every voice session in the process
 // (Groq's quota is per organization, not per Discord server).
 const limiters = new Map<string, SlidingWindowLimiter>();
-function limiterFor(model: string, rpm: number): SlidingWindowLimiter {
-  let l = limiters.get(model);
+function limiterFor(key: string, model: string, rpm: number): SlidingWindowLimiter {
+  const id = `${key}|${model}`; // in memory only — never logged
+  let l = limiters.get(id);
   if (!l) {
     l = new SlidingWindowLimiter({ maxPerWindow: rpm > 0 ? rpm : Infinity });
-    limiters.set(model, l);
+    limiters.set(id, l);
   }
   return l;
 }
@@ -95,33 +120,53 @@ let announced = false;
 /** Forget all limiter state (tests). */
 export function resetRateLimiters(): void {
   limiters.clear();
+  deadKeys.clear();
   announced = false;
 }
 
-function announceLimits(cfg: LimitConfig): void {
+function announceLimits(cfg: LimitConfig, keyCount: number): void {
   if (announced) return;
   announced = true;
   const cap = (rpm: number) => (rpm > 0 ? `<=${rpm}/min` : "no cap");
   const parts = cfg.models.map((m, i) => `${m} ${cap(i === 0 ? cfg.maxRpm : cfg.fallbackRpm)}`);
+  const keys = keyCount > 1 ? ` per key, ${keyCount} API keys` : "";
   console.log(
-    `[stt-groq] rate limiter on: ${parts.join(" -> spill-over ")}, max queue wait ${cfg.maxQueueWaitMs}ms`,
+    `[stt-groq] rate limiter on: ${parts.join(" -> spill-over ")}${keys}, max queue wait ${cfg.maxQueueWaitMs}ms`,
   );
 }
 
-/** The model that can take a request soonest — the main model whenever it has a free slot. */
-function pickSlot(cfg: LimitConfig): { model: string; limiter: SlidingWindowLimiter } {
-  let pick = { model: cfg.models[0]!, limiter: limiterFor(cfg.models[0]!, cfg.maxRpm) };
-  let pickWait = pick.limiter.estimateWaitMs();
-  for (let i = 1; i < cfg.models.length && pickWait > 0; i++) {
-    const model = cfg.models[i]!;
-    const limiter = limiterFor(model, cfg.fallbackRpm);
-    const wait = limiter.estimateWaitMs();
-    if (wait < pickWait) {
-      pick = { model, limiter };
-      pickWait = wait;
+interface Slot {
+  model: string;
+  key: string;
+  /** 1-based position in the key list, for logs (the key itself is never logged). */
+  keyNo: number;
+  limiter: SlidingWindowLimiter;
+}
+
+/**
+ * The (model, key) pair that can take a request soonest. Order of preference: the main model
+ * first (keys in list order), then the spill-over model — so the first pair with a free slot
+ * wins, otherwise the one with the shortest wait (ties go to the earlier pair).
+ */
+function pickSlot(cfg: LimitConfig, keys: string[]): Slot {
+  let pick: Slot | undefined;
+  let pickWait = Infinity;
+  for (let m = 0; m < cfg.models.length; m++) {
+    const model = cfg.models[m]!;
+    const rpm = m === 0 ? cfg.maxRpm : cfg.fallbackRpm;
+    for (let k = 0; k < keys.length; k++) {
+      const key = keys[k]!;
+      if (deadKeys.has(key)) continue;
+      const limiter = limiterFor(key, model, rpm);
+      const wait = limiter.estimateWaitMs();
+      if (wait < pickWait) {
+        pick = { model, key, keyNo: k + 1, limiter };
+        pickWait = wait;
+      }
+      if (pickWait <= 0) return pick!;
     }
   }
-  return pick;
+  return pick!;
 }
 
 /** "try again in 3s" / "1m30.5s" / "250ms" inside Groq's 429 message → ms (null if absent). */
@@ -199,8 +244,8 @@ export async function transcribeGroq(
   wavPath: string,
   opts: { prompt?: string } = {},
 ): Promise<TranscribeResult> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
+  const keys = groqApiKeys();
+  if (keys.length === 0) {
     throw new Error("[stt-groq] GROQ_API_KEY missing in .env");
   }
 
@@ -214,12 +259,15 @@ export async function transcribeGroq(
   form.append("response_format", "verbose_json");
 
   const cfg = limitConfig();
-  announceLimits(cfg);
+  announceLimits(cfg, keys.length);
 
   for (let attempt = 1; ; attempt++) {
-    // Take the model that can serve us soonest, then wait for our turn on it.
+    if (keys.every((k) => deadKeys.has(k))) {
+      throw new Error("[stt-groq] every Groq API key was rejected (HTTP 401/403) — check GROQ_API_KEY / GROQ_API_KEYS");
+    }
+    // Take the (model, key) pair that can serve us soonest, then wait for our turn on it.
     // Throws SttQueueTimeoutError when that would take longer than the queue budget.
-    const slot = pickSlot(cfg);
+    const slot = pickSlot(cfg, keys);
     if (slot.model !== MODEL) {
       console.log(`[stt-groq] ${MODEL} is at its limit — sending this chunk to ${slot.model}`);
     }
@@ -230,7 +278,7 @@ export async function transcribeGroq(
     try {
       res = await fetch(API_URL, {
         method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: { Authorization: `Bearer ${slot.key}` },
         body: form,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -273,15 +321,25 @@ export async function transcribeGroq(
       const hint = retryAfterMs(res) ?? parseTryAgainMs(body) ?? RETRY_BASE_MS * attempt;
       slot.limiter.pause(
         hint > 0 ? hint + 200 : 0,
-        `HTTP 429 on ${slot.model} (${limitKind(body)})`,
+        `HTTP 429 on ${slot.model} key#${slot.keyNo} (${limitKind(body)})`,
       );
       if (attempt < MAX_ATTEMPTS) {
         console.warn(
-          `[stt-groq] HTTP 429 (${limitKind(body)}) on ${slot.model} — retry ${attempt}/${MAX_ATTEMPTS - 1}, model paused ${hint}ms`,
+          `[stt-groq] HTTP 429 (${limitKind(body)}) on ${slot.model} key#${slot.keyNo} — retry ${attempt}/${MAX_ATTEMPTS - 1}, paused ${hint}ms`,
         );
-        // No sleep here: acquire() at the top waits out the pause, or the other model takes over.
+        // No sleep here: acquire() at the top waits out the pause, or another key / the
+        // other model takes over.
         continue;
       }
+    } else if ((res.status === 401 || res.status === 403) && keys.length > 1) {
+      // This key is bad (revoked, typo, org blocked). Drop it and retry with another key —
+      // this does not use up one of the retry attempts.
+      deadKeys.add(slot.key);
+      console.warn(
+        `[stt-groq] HTTP ${res.status} on key#${slot.keyNo} — key rejected, skipped until restart: ${body.slice(0, 120)}`,
+      );
+      attempt--;
+      continue;
     } else if (res.status >= 500 && attempt < MAX_ATTEMPTS) {
       const wait = Math.min(retryAfterMs(res) ?? RETRY_BASE_MS * attempt, MAX_WAIT_MS);
       console.warn(
