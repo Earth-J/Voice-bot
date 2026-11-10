@@ -1,24 +1,26 @@
 /**
- * STT entry point — Groq Whisper cloud (./groq.ts, GROQ_API_KEY).
+ * STT entry point — Groq Whisper cloud (./groq.ts, GROQ_API_KEY / GROQ_API_KEYS).
  *
  * Post-process: every transcript is run through ./hallucinations.ts.
  * Hallucinated text → empty string (caller treats it as silence, nothing is stored).
  */
 import { unlink } from "node:fs/promises";
 import { isHallucination } from "./hallucinations.ts";
-import { transcribeGroq } from "./groq.ts";
+import { groqApiKeys, transcribeGroq } from "./groq.ts";
 import type { TranscribeResult } from "./types.ts";
 
 /** Startup check: error message if Groq isn't configured, else null. */
 export function sttConfigError(): string | null {
-  return process.env.GROQ_API_KEY
+  return groqApiKeys().length > 0
     ? null
     : "GROQ_API_KEY missing in .env — get one at https://console.groq.com";
 }
 
 /** One-line description for the startup log. */
 export function sttSummary(): string {
-  return `groq (${process.env.GROQ_STT_MODEL || "whisper-large-v3"}, lang=${process.env.GROQ_STT_LANGUAGE || "th"})`;
+  const n = groqApiKeys().length;
+  const keys = n > 1 ? `, ${n} keys` : "";
+  return `groq (${process.env.GROQ_STT_MODEL || "whisper-large-v3"}, lang=${process.env.GROQ_STT_LANGUAGE || "th"}${keys})`;
 }
 
 export async function transcribe(wavPath: string): Promise<TranscribeResult> {
