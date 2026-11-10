@@ -8,9 +8,15 @@
  *
  * Env:
  *   MUSIC_BOT_TOKEN        token of the second (music) bot — required
- *   LAVALINK_HOST          default "localhost:2333"
+ *   LAVALINK_NODES         optional JSON array of nodes, in priority order (first = primary,
+ *                          the rest = fallbacks), e.g.
+ *                          [{"name":"own","url":"host:2333","auth":"pw","secure":false},
+ *                           {"name":"backup","url":"host2:443","auth":"pw2","secure":true}]
+ *                          When set, LAVALINK_HOST/PASSWORD/SECURE below are ignored.
+ *   LAVALINK_HOST          default "localhost:2333"   (single-node mode)
  *   LAVALINK_PASSWORD      default "youshallnotpass"
  *   LAVALINK_SECURE        "true" for wss/https
+ *   LAVALINK_REVIVE_MS     how often a dead node is retried (default 30000, 0 = never)
  *   LAVALINK_SEARCH_PREFIX default "ytsearch:" (needs the youtube-source plugin)
  *   MUSIC_VOLUME           starting volume 0–1, default 0.5 (voice commands change it ±5%)
  *   MUSIC_MAX_MINUTES      skip results longer than this (default 20)
@@ -18,7 +24,7 @@
  *                          also the most a pasted playlist can add
  */
 import { Client, Events, GatewayIntentBits } from "discord.js";
-import { Connectors, Shoukaku, type Node, type Player } from "shoukaku";
+import { Connectors, Constants, Shoukaku, type Node, type NodeOption, type Player } from "shoukaku";
 import { TrackQueue, type LoopMode } from "./queue.ts";
 
 export type { LoopMode } from "./queue.ts";
@@ -28,6 +34,9 @@ import { queryKey, type MusicHistory } from "./history.ts";
 const HOST = process.env.LAVALINK_HOST || "localhost:2333";
 const PASSWORD = process.env.LAVALINK_PASSWORD || "youshallnotpass";
 const SECURE = process.env.LAVALINK_SECURE === "true";
+const REVIVE_MS = process.env.LAVALINK_REVIVE_MS !== undefined && process.env.LAVALINK_REVIVE_MS !== ""
+  ? Math.max(0, Number(process.env.LAVALINK_REVIVE_MS) || 0)
+  : 30_000;
 const SEARCH_PREFIX = process.env.LAVALINK_SEARCH_PREFIX || "ytsearch:";
 const MAX_MS = (Number(process.env.MUSIC_MAX_MINUTES) || 20) * 60_000;
 const MAX_QUEUE = Number(process.env.MUSIC_MAX_QUEUE) || 50;
@@ -38,6 +47,35 @@ const DEFAULT_VOLUME_PCT = Math.round(
     ? Math.min(Math.max(envVolume, 0), 1)
     : 0.5) * 100,
 );
+
+/**
+ * Lavalink nodes, in priority order. LAVALINK_NODES (JSON array) wins; otherwise the single
+ * node from LAVALINK_HOST / LAVALINK_PASSWORD / LAVALINK_SECURE.
+ */
+function loadNodes(): NodeOption[] {
+  const raw = process.env.LAVALINK_NODES?.trim();
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr) || arr.length === 0) throw new Error("must be a non-empty array");
+      const seen = new Set<string>();
+      const nodes = arr.map((n: any, i: number): NodeOption => {
+        if (!n || typeof n.url !== "string" || typeof n.auth !== "string") {
+          throw new Error(`node #${i + 1} needs "url" ("host:port") and "auth"`);
+        }
+        let name = String(n.name || `node${i + 1}`);
+        if (seen.has(name)) name = `${name}-${i + 1}`;
+        seen.add(name);
+        return { name, url: n.url, auth: n.auth, secure: n.secure === true || n.secure === "true" };
+      });
+      console.log(`[lavalink] ${nodes.length} nodes (priority order): ${nodes.map((n) => n.name).join(" → ")}`);
+      return nodes;
+    } catch (e: any) {
+      console.warn(`[lavalink] LAVALINK_NODES is invalid (${e?.message ?? e}) — using LAVALINK_HOST instead`);
+    }
+  }
+  return [{ name: "main", url: HOST, auth: PASSWORD, secure: SECURE }];
+}
 
 export interface Track {
   title: string;
@@ -100,6 +138,10 @@ export class LavalinkMusic {
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
   });
   private shoukaku: Shoukaku;
+  /** Configured nodes, in priority order (first = preferred). */
+  private readonly nodeOpts: NodeOption[] = loadNodes();
+  /** Nodes that have a pending "try to bring it back" timer. */
+  private reviving = new Set<string>();
   private now = new Map<string, Track>();
   /** Epoch ms when the current song started. Used only to draw a progress bar. */
   private startedAt = new Map<string, number>();
@@ -129,10 +171,24 @@ export class LavalinkMusic {
 
   /** `history` = the song-history database; null/omitted = no history (every request is a fresh search). */
   constructor(private readonly songHistory: MusicHistory | null = null) {
+    // Shoukaku v4 times are in SECONDS (restTimeout used to be 15_000 here = ~4 hours, which
+    // would make a hung node block every search instead of failing over).
     this.shoukaku = new Shoukaku(
       new Connectors.DiscordJS(this.client),
-      [{ name: "main", url: HOST, auth: PASSWORD, secure: SECURE }],
-      { moveOnDisconnect: false, resume: false, reconnectTries: 5, restTimeout: 15_000 },
+      this.nodeOpts,
+      {
+        // A node that stays down → its players move to the next connected node and keep playing.
+        moveOnDisconnect: true,
+        resume: false,
+        reconnectTries: 2, // 2 tries x 3 s ≈ 6 s before a node is declared dead and failover starts
+        reconnectInterval: 3,
+        restTimeout: 15,
+        // Fallback order, not load balancing: always the first CONNECTED node in the list.
+        nodeResolver: (nodes) =>
+          this.nodeOpts
+            .map((o) => nodes.get(o.name))
+            .find((n) => n?.state === Constants.State.CONNECTED),
+      },
     );
     // Unhandled 'error' events would crash the process.
     this.shoukaku.on("error", (name, e) =>
@@ -142,9 +198,10 @@ export class LavalinkMusic {
     this.shoukaku.on("close", (name, code, reason) =>
       console.warn(`[lavalink] node ${name} closed (${code}) ${reason ?? ""}`),
     );
-    this.shoukaku.on("disconnect", (name) =>
-      console.warn(`[lavalink] node ${name} disconnected`),
-    );
+    this.shoukaku.on("disconnect", (name, moved) => {
+      console.warn(`[lavalink] node ${name} disconnected (${moved} player(s) moved to another node)`);
+      this.scheduleRevive(name);
+    });
     this.client.once(Events.ClientReady, (c) =>
       console.log(`[lavalink] music bot logged in as ${c.user.tag}`),
     );
@@ -152,6 +209,59 @@ export class LavalinkMusic {
 
   async start(token: string): Promise<void> {
     await this.client.login(token);
+  }
+
+  /**
+   * Shoukaku never reuses a node that gave up, so re-add it a bit later. If it is still dead it
+   * fails again and this schedules the next try. Players stay on the fallback; only NEW songs
+   * go back to the preferred node once it is connected.
+   */
+  private scheduleRevive(name: string): void {
+    if (REVIVE_MS <= 0 || this.reviving.has(name)) return;
+    const opts = this.nodeOpts.find((o) => o.name === name);
+    if (!opts) return;
+    this.reviving.add(name);
+    const t = setTimeout(() => {
+      this.reviving.delete(name);
+      if (this.shoukaku.nodes.has(name)) return;
+      console.log(`[lavalink] retrying node ${name}…`);
+      try {
+        this.shoukaku.addNode(opts);
+      } catch (e: any) {
+        console.warn(`[lavalink] could not re-add node ${name}:`, e?.message ?? e);
+        this.scheduleRevive(name);
+      }
+    }, REVIVE_MS);
+    t.unref?.();
+  }
+
+  /** Connected nodes, preferred first. */
+  private connectedNodes(): Node[] {
+    return this.nodeOpts
+      .map((o) => this.shoukaku.nodes.get(o.name))
+      .filter((n): n is Node => !!n && n.state === Constants.State.CONNECTED);
+  }
+
+  /**
+   * node.rest.resolve() with failover: if a node throws (timeout, 5xx) or answers loadType
+   * "error" (e.g. its YouTube source is blocked), the next connected node is tried.
+   * "empty" is a real answer ("no such song") and is returned as is.
+   */
+  private async resolve(identifier: string): Promise<any> {
+    const nodes = this.connectedNodes();
+    if (nodes.length === 0) throw new Error("Lavalink ยังไม่พร้อม (ยังไม่ได้เชื่อมต่อ node)");
+    let lastErr: Error = new Error("Lavalink load failed: unknown");
+    for (const node of nodes) {
+      try {
+        const res: any = await node.rest.resolve(identifier);
+        if (res && res.loadType !== "error") return res;
+        lastErr = new Error(`Lavalink load failed: ${res?.data?.message ?? "unknown"}`);
+      } catch (e: any) {
+        lastErr = e instanceof Error ? e : new Error(String(e));
+      }
+      console.warn(`[lavalink] node ${node.name} could not load "${identifier}": ${lastErr.message}`);
+    }
+    throw lastErr;
   }
 
   private bump(guildId: string): number {
@@ -297,9 +407,6 @@ export class LavalinkMusic {
    * A YouTube video link is loaded directly instead of searched (no "ytsearch:" prefix).
    */
   private async search(guildId: string, query: string): Promise<Track | null> {
-    const node = this.shoukaku.getIdealNode();
-    if (!node) throw new Error("Lavalink ยังไม่พร้อม (ยังไม่ได้เชื่อมต่อ node)");
-
     const q = parseMusicQuery(query);
     // A playlist link given to a "play now" request: play its first song (enqueue() takes all of it).
     if (q.playlistUrl) return (await this.loadPlaylist(q.playlistUrl))?.tracks[0] ?? null;
@@ -307,15 +414,12 @@ export class LavalinkMusic {
     // Asked for before in this server? Play the same video again instead of trusting the search ranking.
     const key = q.directUrl ? "" : queryKey(q);
     if (!q.directUrl) {
-      const remembered = await this.recall(node, guildId, q, key);
+      const remembered = await this.recall(guildId, q, key);
       if (remembered) return remembered;
     }
 
     for (const text of q.searches) {
-      const res: any = await node.rest.resolve(q.directUrl ? text : `${SEARCH_PREFIX}${text}`);
-      if (!res || res.loadType === "error") {
-        throw new Error(`Lavalink load failed: ${res?.data?.message ?? "unknown"}`);
-      }
+      const res: any = await this.resolve(q.directUrl ? text : `${SEARCH_PREFIX}${text}`);
       const candidates: any[] =
         res.loadType === "search" ? res.data : res.loadType === "track" ? [res.data] : [];
       const picked = pickCandidate(candidates, q, MAX_MS);
@@ -334,7 +438,6 @@ export class LavalinkMusic {
    * so a deleted / blocked video is noticed) or null → fall back to a normal search.
    */
   private async recall(
-    node: Node,
     guildId: string,
     q: MusicQuery,
     key: string,
@@ -343,7 +446,7 @@ export class LavalinkMusic {
     const match = this.songHistory.lookup(guildId, q, MAX_MS);
     if (!match) return null;
     try {
-      const res: any = await node.rest.resolve(match.track.uri);
+      const res: any = await this.resolve(match.track.uri!);
       if (res?.loadType === "track" && res.data && filterPlayable([res.data], MAX_MS).length > 0) {
         console.log(
           `[music] 🕘 history (${match.how}, played ${match.plays}x): "${q.song}" → ${match.track.title}`,
@@ -367,13 +470,7 @@ export class LavalinkMusic {
   private async loadPlaylist(
     url: string,
   ): Promise<{ name: string; tracks: Track[]; skipped: number } | null> {
-    const node = this.shoukaku.getIdealNode();
-    if (!node) throw new Error("Lavalink ยังไม่พร้อม (ยังไม่ได้เชื่อมต่อ node)");
-
-    const res: any = await node.rest.resolve(url);
-    if (!res || res.loadType === "error") {
-      throw new Error(`Lavalink load failed: ${res?.data?.message ?? "unknown"}`);
-    }
+    const res: any = await this.resolve(url);
     if (res.loadType !== "playlist") return null;
 
     const all: any[] = res.data?.tracks ?? [];
