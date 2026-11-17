@@ -1655,6 +1655,7 @@ for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
       if (setupStore.get(gid)) await refreshQueueEmbed(gid).catch(() => {});
       else await deleteQueueEmbed(gid);
     }
+    music.shutdown();
     music.client.destroy();
     client.destroy();
     process.exit(0);
