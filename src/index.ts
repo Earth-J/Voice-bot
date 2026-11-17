@@ -759,7 +759,7 @@ async function handleQueueButton(interaction: ButtonInteraction): Promise<void> 
     console.log(`[earth-voice] ▶️ queue dropdown ${userTag}: play #${position} → ${playing ? `"${playing.title}"` : "failed"}`);
     if (playing && listening) session!.playSfx("play");
     await interaction.editReply({
-      components: [buildQueueNotice(playing ? `▶️ กำลังเล่น **${title}**` : `⚠️ ${QUEUE_GONE}`)],
+      components: [buildQueueNotice(playing ? `<:4767voiceevent:1569242043107115118> กำลังเล่น **${title}**` : `⚠️ ${QUEUE_GONE}`)],
       flags: MessageFlags.IsComponentsV2,
     });
   } catch (e: any) {
