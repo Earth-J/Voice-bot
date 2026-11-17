@@ -441,13 +441,17 @@ async function queuePayload(guildId: string) {
 
   // Blurred-cover card, rendered from the song's artwork. If rendering fails the message
   // is still sent, just without the picture (no embed to fall back on, either way).
+  // A NEW file name for every render: each edit deletes the old attachment and uploads a new one, and
+  // when both carry the same name Discord / the app can keep pointing at the deleted one
+  // ("Image failed to load"). The name must match the attachment:// URL of the gallery below.
+  const cardName = `nowplaying-${Date.now().toString(36)}.png`;
   const files: AttachmentBuilder[] = [];
   try {
     // Nothing playing → the static "Waiting for a song…" card instead.
     const card = np
       ? await renderNowPlaying(np, music.positionMs(guildId) ?? 0, { paused })
       : await renderIdleCard();
-    files.push(new AttachmentBuilder(card, { name: "nowplaying.png" }));
+    files.push(new AttachmentBuilder(card, { name: cardName }));
   } catch (e: any) {
     console.warn("[earth-voice] now-playing card render failed:", e?.message ?? e);
   }
@@ -484,7 +488,7 @@ async function queuePayload(guildId: string) {
   if (files.length > 0) {
     container.addMediaGalleryComponents(
       new MediaGalleryBuilder().addItems(
-        new MediaGalleryItemBuilder().setURL("attachment://nowplaying.png"),
+        new MediaGalleryItemBuilder().setURL(`attachment://${cardName}`),
       ),
     );
   }
