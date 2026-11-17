@@ -112,8 +112,6 @@ export interface QueueEmbed {
 }
 
 export interface PlayerContentOptions {
-  /** Max queue lines to show (default 5 — the 📋 button shows the whole list). */
-  maxShown?: number;
   /** Current volume in percent (no longer shown on the panel — the 🔉/🔊 buttons change it). */
   volumePct?: number;
   /** Loop mode (default "none"). */
@@ -190,7 +188,7 @@ const IDLE_TIP = "พิมพ์ชื่อเพลงในห้องน�
  *   -# ขอเพลง โดย @user ใน 🔊 ห้อง          subtext: small + muted
  *   -# ⏸️ หยุดชั่วคราว · 🔁 เพลงนี้ · 🔉 80%     only the parts that aren't the default
  *
- * then the next few songs (if any) and a small footer with the command hints.
+ * The queue is not part of this text: it is the Dropdown Menu right under the card (see controls.ts).
  *
  * Nothing playing (nobody has asked for a song yet):
  *
@@ -206,13 +204,13 @@ const IDLE_TIP = "พิมพ์ชื่อเพลงในห้องน�
  */
 export function buildPlayerSections<T extends QueueTrack>(
   now: T | null,
-  queue: T[],
+  _queue: T[], // not listed in the text any more — the Dropdown Menu shows it (kept so callers don't change)
   opts: PlayerContentOptions = {},
 ): string[] {
-  const { maxShown = 5, loop = "none", paused = false, setupChannel = false } = opts;
+  const { loop = "none", paused = false, setupChannel = false } = opts;
 
   const hints = "earth เพิ่มเพลง <ชื่อ> • earth ลบคิว <เลข> • earth ข้าม • earth เงียบ";
-  // Text above the divider (title / artist) and below it (small muted info, queue, footer).
+  // Text above the divider (title / artist) and below it (small muted info, footer).
   const head: string[] = [];
   const tail: string[] = [];
   let divider = false;
@@ -244,11 +242,9 @@ export function buildPlayerSections<T extends QueueTrack>(
     tail.push(`-# ${setupChannel ? IDLE_TIP : hints}`);
   }
 
-  if (queue.length > 0) {
-    tail.push("", `-# 📋 คิว (${queue.length})`, ...queueLines(queue, maxShown));
-  }
+  // The queue is NOT listed here: it lives in the Dropdown Menu under the card (controls.ts).
 
-  // TextDisplay caps at 4000 chars across the whole message — clip defensively, `maxShown` keeps this far below it.
+  // TextDisplay caps at 4000 chars across the whole message — clip defensively.
   const clipText = (s: string) => (s.length > 1900 ? `${s.slice(0, 1899)}…` : s);
   const headText = clipText(head.join("\n"));
   const tailText = clipText(tail.join("\n").trim());
