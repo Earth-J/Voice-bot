@@ -2,7 +2,7 @@
  * The button rows under the player embed (Discord Message Components), laid out like the
  * reference screenshot — all grey, 5 per row:
  *
- *   row 1:  🔀 shuffle   ⏮ previous   ⏸/▶ pause·resume   ⏭ next   🔁 loop
+ *   row 1:  🔀 shuffle   ⏮ previous   ⏸/<:4303discordcategorycollapsedwhit:1569242059251130389> pause·resume   ⏭ next   🔁 loop
  *   row 2:  📋 queue     🔉 vol −      ⏹ stop              🔊 vol +    🕘 history
  *
  * Only the ids and the look live here; what each button does is handled in index.ts
@@ -15,7 +15,7 @@
  *        ▼
  *   ephemeral panel:  ### 🎵 เพลงในคิว #3
  *                     **Title** …                         (+ thumbnail)
- *                     [ ▶ เล่นเลย ]  [ 🗑 ลบออกจากคิว ]
+ *                     [ <:4303discordcategorycollapsedwhit:1569242059251130389> เล่นเลย ]  [ 🗑 ลบออกจากคิว ]
  *
  * index.ts handles it in handleQueueSelect / handleQueueButton.
  *
@@ -24,7 +24,7 @@
  *
  *   🕘 ephemeral panel:  ### 🕘 ประวัติเพลงที่เคยเปิด
  *                        [ Dropdown: 25 songs of this page ▾ ]
- *                        [ ⏮ ] [ ◀ ] [ 2/5 ] [ ▶ ] [ ⏭ ]            ← only with more than one page
+ *                        [ ⏮ ] [ <:Gemini_Generated_Image_402sjg402:1569243289964519494> ] [ 2/5 ] [ <:4303discordcategorycollapsedwhit:1569242059251130389> ] [ ⏭ ]            ← only with more than one page
  *                        [ เปิดล่าสุด ] [ เปิดบ่อยสุด ]                ← sort order (the active one is blue)
  *        │ pick a song
  *        ▼
@@ -106,14 +106,14 @@ export function buildControlRows({
     btn(CONTROL_ID.stop, "<:Gemini_Generated_Image_pj02gnpj0:1569243957844508672>"),
     btn(CONTROL_ID.volumeUp, "🔊"),
     // Greyed out like the others while nothing plays, and also when the song history is switched off.
-    btn(CONTROL_ID.history, "🕘", disabled || !history),
+    btn(CONTROL_ID.history, "<:8810datetime:1572098391519920209>", disabled || !history),
   );
   return [row1, row2];
 }
 
 // ─── Queue dropdown ──────────────────────────────────────────────────────────
 
-/** customId prefix of the queue dropdown and of the ▶ / 🗑 buttons under a picked song. */
+/** customId prefix of the queue dropdown and of the <:4303discordcategorycollapsedwhit:1569242059251130389> / 🗑 buttons under a picked song. */
 export const QUEUE_PREFIX = "mq:";
 
 export const QUEUE_ID = {
@@ -189,7 +189,7 @@ function itemThumbnail(track: QueueTrack): string | undefined {
 
 /**
  * What the person sees (ephemeral) after picking a song in the dropdown:
- * the song (with its thumbnail when it has one) and the two buttons ▶ เล่นเลย / 🗑 ลบออกจากคิว.
+ * the song (with its thumbnail when it has one) and the two buttons <:4303discordcategorycollapsedwhit:1569242059251130389> เล่นเลย / 🗑 ลบออกจากคิว.
  */
 export function buildQueueItemPanel(track: QueueTrack, position: number): ContainerBuilder {
   const lines = [`### <:1731discordprofileactivitywhite:1569242674307797042> เพลงในคิว #${position}`, `**${escapeMd(clip(track.title, 100))}**`];
@@ -237,7 +237,7 @@ export function buildQueueNotice(text: string): ContainerBuilder {
 
 // ─── History dropdown (🕘 button) ────────────────────────────────────────────
 
-/** customId prefix of everything inside the history panel (dropdown, page / sort buttons, ▶ / ➕ / back). */
+/** customId prefix of everything inside the history panel (dropdown, page / sort buttons, <:4303discordcategorycollapsedwhit:1569242059251130389> / ➕ / back). */
 export const HISTORY_PREFIX = "mh:";
 
 /**
@@ -245,7 +245,7 @@ export const HISTORY_PREFIX = "mh:";
  * button can redraw the same view without any server-side state (the panel is an ephemeral
  * message, one per person). <sort> is "r" (most recently played) or "p" (most played).
  *   mh:pick:<sort>:<page>              the dropdown (its value is a video id)
- *   mh:page:<sort>:<page>              ⏮ ◀ ▶ ⏭, the two sort buttons (→ page 0) and "back to the list"
+ *   mh:page:<sort>:<page>              ⏮ <:Gemini_Generated_Image_402sjg402:1569243289964519494> <:4303discordcategorycollapsedwhit:1569242059251130389> ⏭, the two sort buttons (→ page 0) and "back to the list"
  *   mh:play:<sort>:<page>:<video id>   เล่นเลย
  *   mh:add:<sort>:<page>:<video id>    เพิ่มเข้าคิว
  */
@@ -254,7 +254,7 @@ export const HISTORY_ID = {
   pagePrefix: "mh:page:",
   playPrefix: "mh:play:",
   addPrefix: "mh:add:",
-  /** The "2/5" label between ◀ and ▶ — always disabled, so it has no handler. */
+  /** The "2/5" label between <:Gemini_Generated_Image_402sjg402:1569243289964519494> and <:4303discordcategorycollapsedwhit:1569242059251130389> — always disabled, so it has no handler. */
   indicator: "mh:noop",
 } as const;
 
@@ -316,17 +316,17 @@ export interface HistoryPanelInput {
   pages: number;
   /** Different songs in the whole history. */
   total: number;
-  /** One line shown above the list: result of the last ▶ / ➕ ("กำลังเล่น …"). */
+  /** One line shown above the list: result of the last <:4303discordcategorycollapsedwhit:1569242059251130389> / ➕ ("กำลังเล่น …"). */
   notice?: string;
 }
 
 /**
  * The history panel: title, one dropdown with this page's songs, and — when there is something to
- * switch — the page row ⏮ ◀ 2/5 ▶ ⏭ and the sort row [เปิดล่าสุด] [เปิดบ่อยสุด]. An empty history is
+ * switch — the page row ⏮ <:Gemini_Generated_Image_402sjg402:1569243289964519494> 2/5 <:4303discordcategorycollapsedwhit:1569242059251130389> ⏭ and the sort row [เปิดล่าสุด] [เปิดบ่อยสุด]. An empty history is
  * just a hint — Discord does not allow an empty dropdown.
  */
 export function buildHistoryPanel({ entries, sort, page, pages, total, notice }: HistoryPanelInput): ContainerBuilder {
-  const lines = ["### 🕘 ประวัติเพลงที่เคยเปิด"];
+  const lines = ["### <:8810datetime:1572098391519920209> ประวัติเพลงที่เคยเปิด"];
   if (total > 0) lines.push(`-# ทั้งหมด ${total} เพลง · หน้า ${page + 1}/${pages} · เรียงจาก${SORT_TEXT[sort]}`);
   if (notice) lines.push(notice);
 
@@ -343,7 +343,7 @@ export function buildHistoryPanel({ entries, sort, page, pages, total, notice }:
   const offset = page * HISTORY_PAGE_SIZE;
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`${HISTORY_ID.pickPrefix}${SORT_CODE[sort]}:${page}`)
-    .setPlaceholder(`🕘 เลือกเพลงที่เคยเปิด (หน้า ${page + 1}/${pages})`)
+    .setPlaceholder(`เลือกเพลงที่เคยเปิด (หน้า ${page + 1}/${pages})`)
     .setMinValues(1)
     .setMaxValues(1)
     .addOptions(
@@ -364,7 +364,7 @@ export function buildHistoryPanel({ entries, sort, page, pages, total, notice }:
   return container;
 }
 
-/** ⏮ first · ◀ previous · "2/5" · ▶ next · ⏭ last (the ends grey out on the first / last page). */
+/** ⏮ first · <:Gemini_Generated_Image_402sjg402:1569243289964519494> previous · "2/5" · <:4303discordcategorycollapsedwhit:1569242059251130389> next · ⏭ last (the ends grey out on the first / last page). */
 function buildHistoryNavRow(page: number, pages: number, sort: HistorySort): ActionRowBuilder<ButtonBuilder> {
   const go = (label: string, target: number, off: boolean) =>
     new ButtonBuilder()
@@ -376,13 +376,13 @@ function buildHistoryNavRow(page: number, pages: number, sort: HistorySort): Act
   const last = page >= pages - 1;
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     go("⏮", 0, first),
-    go("◀", page - 1, first),
+    go("<:Gemini_Generated_Image_402sjg402:1569243289964519494>", page - 1, first),
     new ButtonBuilder()
       .setCustomId(HISTORY_ID.indicator)
       .setLabel(`${page + 1}/${pages}`)
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(true),
-    go("▶", page + 1, last),
+    go("<:4303discordcategorycollapsedwhit:1569242059251130389>", page + 1, last),
     go("⏭", pages - 1, last),
   );
 }
@@ -401,7 +401,7 @@ function buildHistorySortRow(sort: HistorySort): ActionRowBuilder<ButtonBuilder>
 /**
  * The panel after picking a song in the history dropdown: the song (with its 16:9 thumbnail),
  * how often / when it was played, and [เล่นเลย] [เพิ่มเข้าคิว] [กลับไปรายการ]. `sort` and `page`
- * ride along in the buttons so "back" and the result of ▶ / ➕ land on the same view.
+ * ride along in the buttons so "back" and the result of <:4303discordcategorycollapsedwhit:1569242059251130389> / ➕ land on the same view.
  */
 export function buildHistoryItemPanel(entry: HistoryEntry, page: number, sort: HistorySort): ContainerBuilder {
   const info = [entry.author ? escapeMd(clip(entry.author, 60)) : null, fmtMs(entry.lengthMs)]
@@ -409,7 +409,7 @@ export function buildHistoryItemPanel(entry: HistoryEntry, page: number, sort: H
     .join(" · ");
   const text = new TextDisplayBuilder().setContent(
     [
-      "### 🕘 เพลงจากประวัติ",
+      "### <:8810datetime:1572098391519920209> เพลงจากประวัติ",
       `**${escapeMd(clip(entry.title, 100))}**`,
       `-# ${info}`,
       `-# เคยเปิด ${entry.plays} ครั้ง · ล่าสุด <t:${Math.floor(entry.lastPlayedAt / 1000)}:R>`,
