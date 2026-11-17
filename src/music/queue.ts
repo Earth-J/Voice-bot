@@ -149,19 +149,18 @@ export function buildQueueListEmbed<T extends QueueTrack>(now: T | null, queue: 
   const lines: string[] = [];
   lines.push(
     now
-      ? `▶️ **กำลังเล่น**\n${escapeMd(clip(now.title))} \`${fmtMs(now.lengthMs)}\``
+      ? `<:4767voiceevent:1569242043107115118> **กำลังเล่น**\n${escapeMd(clip(now.title))} \`${fmtMs(now.lengthMs)}\``
       : "ตอนนี้ไม่ได้เล่นเพลงอยู่",
   );
   lines.push("");
   if (queue.length === 0) {
-    lines.push("📋 **คิว** — ว่าง");
+    lines.push("<:1731discordprofileactivitywhite:1569242674307797042> **คิว** — ว่าง");
   } else {
-    lines.push(`📋 **คิว** (${queue.length})`);
+    lines.push(`<:1731discordprofileactivitywhite:1569242674307797042> **คิว** (${queue.length})`);
     lines.push(...queueLines(queue, 25));
   }
   lines.push("");
-  lines.push("เลือกเพลงจาก Dropdown ใต้แผงเพลงเพื่อ ▶ เล่นเลย / 🗑 ลบ — หรือพูด `earth ลบคิว <เลข>`");
-  return { title: "🎵 คิวเพลง", description: lines.join("\n"), color: INVISIBLE_EMBED_COLOR };
+  return { title: "<:1731discordprofileactivitywhite:1569242674307797042> คิวเพลง", description: lines.join("\n"), color: INVISIBLE_EMBED_COLOR };
 }
 
 /** Same content as `buildQueueListEmbed`, as markdown text for a Components V2 TextDisplay. */
