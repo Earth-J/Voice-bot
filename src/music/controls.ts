@@ -199,12 +199,10 @@ export function buildQueueItemPanel(track: QueueTrack, position: number): Contai
       new ButtonBuilder()
         .setCustomId(`${QUEUE_ID.playPrefix}${id}`)
         .setLabel("เล่นเลย")
-        .setEmoji("▶️")
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`${QUEUE_ID.deletePrefix}${id}`)
         .setLabel("ลบออกจากคิว")
-        .setEmoji("🗑️")
         .setStyle(ButtonStyle.Danger),
     ),
   );
