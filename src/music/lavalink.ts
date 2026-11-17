@@ -37,6 +37,7 @@ const SECURE = process.env.LAVALINK_SECURE === "true";
 const REVIVE_MS = process.env.LAVALINK_REVIVE_MS !== undefined && process.env.LAVALINK_REVIVE_MS !== ""
   ? Math.max(0, Number(process.env.LAVALINK_REVIVE_MS) || 0)
   : 30_000;
+let REVIVE_DISABLED = false;
 const SEARCH_PREFIX = process.env.LAVALINK_SEARCH_PREFIX || "ytsearch:";
 const MAX_MS = (Number(process.env.MUSIC_MAX_MINUTES) || 20) * 60_000;
 const MAX_QUEUE = Number(process.env.MUSIC_MAX_QUEUE) || 50;
@@ -142,6 +143,10 @@ export class LavalinkMusic {
   private readonly nodeOpts: NodeOption[] = loadNodes();
   /** Nodes that have a pending "try to bring it back" timer. */
   private reviving = new Set<string>();
+  /** Consecutive failed revive rounds per node — drives the exponential backoff. */
+  private reviveFails = new Map<string, number>();
+  /** Nodes that answered close 4000 / HTTP 429: the server is rate-limiting this bot, so wait much longer. */
+  private rateLimited = new Set<string>();
   private now = new Map<string, Track>();
   /** Epoch ms when the current song started. Used only to draw a progress bar. */
   private startedAt = new Map<string, number>();
@@ -180,8 +185,8 @@ export class LavalinkMusic {
         // A node that stays down → its players move to the next connected node and keep playing.
         moveOnDisconnect: true,
         resume: false,
-        reconnectTries: 2, // 2 tries x 3 s ≈ 6 s before a node is declared dead and failover starts
-        reconnectInterval: 3,
+        reconnectTries: 1, // 1 quick retry (~5 s), then failover. Slower retries are scheduleRevive()'s job (with backoff).
+        reconnectInterval: 5,
         restTimeout: 15,
         // Fallback order, not load balancing: always the first CONNECTED node in the list.
         nodeResolver: (nodes) =>
@@ -191,13 +196,23 @@ export class LavalinkMusic {
       },
     );
     // Unhandled 'error' events would crash the process.
-    this.shoukaku.on("error", (name, e) =>
-      console.warn(`[lavalink] node ${name} error:`, e?.message ?? e),
-    );
-    this.shoukaku.on("ready", (name) => console.log(`[lavalink] node ${name} ready`));
-    this.shoukaku.on("close", (name, code, reason) =>
-      console.warn(`[lavalink] node ${name} closed (${code}) ${reason ?? ""}`),
-    );
+    this.shoukaku.on("error", (name, e) => {
+      const msg = String(e?.message ?? e);
+      if (msg.includes("429")) this.rateLimited.add(name);
+      console.warn(`[lavalink] node ${name} error:`, msg);
+    });
+    this.shoukaku.on("ready", (name) => {
+      this.reviveFails.delete(name);
+      this.rateLimited.delete(name);
+      console.log(`[lavalink] node ${name} ready`);
+    });
+    this.shoukaku.on("close", (name, code, reason) => {
+      // 4000 = "Too many websocket connections attempt for this bot" (free public Lavalink).
+      if (code === 4000) this.rateLimited.add(name);
+      // Print the long provider message once per failure streak, not on every retry.
+      const first = !this.reviveFails.has(name) && !this.reviving.has(name);
+      console.warn(`[lavalink] node ${name} closed (${code}) ${first ? (reason ?? "") : ""}`.trimEnd());
+    });
     this.shoukaku.on("disconnect", (name, moved) => {
       console.warn(`[lavalink] node ${name} disconnected (${moved} player(s) moved to another node)`);
       this.scheduleRevive(name);
@@ -217,10 +232,18 @@ export class LavalinkMusic {
    * go back to the preferred node once it is connected.
    */
   private scheduleRevive(name: string): void {
-    if (REVIVE_MS <= 0 || this.reviving.has(name)) return;
+    if (REVIVE_MS <= 0 || REVIVE_DISABLED || this.reviving.has(name)) return;
     const opts = this.nodeOpts.find((o) => o.name === name);
     if (!opts) return;
     this.reviving.add(name);
+    // Exponential backoff (30 s, 60 s, 2 min … capped at 10 min) + jitter. A node that rate-limited
+    // us waits at least 5 min: hammering a free public node is what gets an IP blacklisted.
+    const fails = this.reviveFails.get(name) ?? 0;
+    this.reviveFails.set(name, fails + 1);
+    let delay = Math.min(REVIVE_MS * 2 ** fails, 600_000);
+    if (this.rateLimited.has(name)) delay = Math.max(delay, 300_000);
+    delay += Math.floor(Math.random() * 5_000);
+    console.log(`[lavalink] node ${name} down — next retry in ${Math.round(delay / 1000)}s`);
     const t = setTimeout(() => {
       this.reviving.delete(name);
       if (this.shoukaku.nodes.has(name)) return;
@@ -231,8 +254,18 @@ export class LavalinkMusic {
         console.warn(`[lavalink] could not re-add node ${name}:`, e?.message ?? e);
         this.scheduleRevive(name);
       }
-    }, REVIVE_MS);
+    }, delay);
     t.unref?.();
+  }
+
+  /** Close every node socket cleanly (call on shutdown) so the server frees this bot's connection slots. */
+  shutdown(): void {
+    REVIVE_DISABLED = true;
+    for (const name of [...this.shoukaku.nodes.keys()]) {
+      try {
+        this.shoukaku.removeNode(name, "shutdown");
+      } catch {}
+    }
   }
 
   /** Connected nodes, preferred first. */
