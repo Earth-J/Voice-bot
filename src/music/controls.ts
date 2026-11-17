@@ -71,7 +71,7 @@ export const VOLUME_STEP = 5;
 export interface ControlState {
   paused: boolean;
   loop: LoopMode;
-  /** Nothing is playing: show every button (🕘 history included), but greyed out and unclickable. */
+  /** Nothing is playing: every button is greyed out and unclickable — except 🕘 history (see below). */
   disabled?: boolean;
   /** false = the song history is switched off (MUSIC_HISTORY=false), so 🕘 is greyed out. Default true. */
   history?: boolean;
@@ -105,8 +105,10 @@ export function buildControlRows({
     btn(CONTROL_ID.volumeDown, "🔉"),
     btn(CONTROL_ID.stop, "<:Gemini_Generated_Image_pj02gnpj0:1569243957844508672>"),
     btn(CONTROL_ID.volumeUp, "🔊"),
-    // Greyed out like the others while nothing plays, and also when the song history is switched off.
-    btn(CONTROL_ID.history, "<:8810datetime:1572098391519920209>", disabled || !history),
+    // Always clickable, even while nothing plays — the first song of a session can come from the
+    // history. index.ts (requireHistoryAccess) makes sure the clicker is in a voice channel.
+    // Only greyed out when the song history is switched off.
+    btn(CONTROL_ID.history, "<:8810datetime:1572098391519920209>", !history),
   );
   return [row1, row2];
 }

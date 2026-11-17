@@ -627,9 +627,111 @@ async function requirePlayerAccess(
   return { guildId, session, listening };
 }
 
+/**
+ * Access check for 🕘 history. Unlike the other player buttons it works while nothing plays (the
+ * first song of a session can come from the history), so it can't rely on Earth already being in a
+ * room. Rules (same as typed requests in the music room):
+ *  - Earth is in a room → the clicker must sit in that same channel (owners always).
+ *  - Earth is not in a room → the clicker must be in a voice channel, and only owners may call
+ *    Earth in; that channel is returned so playing / queueing can join it.
+ * Replies with the reason (ephemeral) and returns null when not allowed.
+ */
+async function requireHistoryAccess(
+  interaction: ButtonInteraction,
+): Promise<{
+  guildId: string;
+  session: VoiceSession | undefined;
+  listening: boolean;
+  /** Where the song should play: Earth's current room, or the clicker's channel when Earth must join. */
+  voiceChannelId: string;
+} | null> {
+  const guildId = interaction.guildId;
+  if (!guildId) return null;
+  const deny = async (content: string) => {
+    await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+    return null;
+  };
+
+  const session = sessions.get(guildId);
+  const listening = session?.state === "listening" && !!session.channelId;
+  const isOwner = OWNER_IDS.has(interaction.user.id);
+  const userVc = interaction.guild?.voiceStates.cache.get(interaction.user.id)?.channelId ?? null;
+
+  if (listening) {
+    if (!isOwner && userVc !== session!.channelId) {
+      return deny(`ต้องอยู่ voice channel เดียวกับเอิร์ธ (<#${session!.channelId}>) ถึงจะใช้ประวัติเพลงได้ครับ`);
+    }
+    return { guildId, session, listening, voiceChannelId: session!.channelId! };
+  }
+
+  // Earth is not in a room yet.
+  if (!userVc) return deny("เข้า voice channel ก่อนนะครับ แล้วกดปุ่มประวัติเพลงอีกครั้ง");
+  if (!isOwner) return deny("เอิร์ธยังไม่ได้เข้าห้องเสียง — ให้เจ้าของเรียกเอิร์ธเข้าห้องก่อนนะครับ");
+  return { guildId, session, listening, voiceChannelId: userVc };
+}
+
+/**
+ * Earth is not in a room yet → join `voiceChannelId` for a song picked from the history.
+ * Runs on the same per-guild chain as typed music-room requests, so two people can't make Earth
+ * connect twice. Returns an error text for the user, or null when Earth is now in that room.
+ */
+async function joinRoomForHistory(
+  session: VoiceSession,
+  guildId: string,
+  voiceChannelId: string,
+): Promise<string | null> {
+  let problem: string | null = "เข้าห้องเสียงไม่ได้ครับ";
+  await serial(setupChains, guildId, "history: join voice failed", async () => {
+    // Someone else may have called Earth in while we were waiting for our turn.
+    if (session.state === "listening" && session.channelId) {
+      problem =
+        session.channelId === voiceChannelId
+          ? null
+          : `ต้องอยู่ voice channel เดียวกับเอิร์ธ (<#${session.channelId}>) ครับ`;
+      return;
+    }
+    if (session.state !== "idle") {
+      problem = "เอิร์ธกำลังเชื่อมต่อห้องเสียงอยู่ ลองใหม่อีกครั้งในสักครู่ครับ";
+      return;
+    }
+    const channel = client.guilds.cache.get(guildId)?.channels.cache.get(voiceChannelId);
+    if (!channel || !channel.isVoiceBased()) {
+      problem = "ไม่พบห้องเสียงของคุณครับ";
+      return;
+    }
+    try {
+      await connectSession(session, channel as VoiceBasedChannel, guildId);
+      problem = null;
+    } catch (e: any) {
+      console.warn("[earth-voice] history: could not join voice:", e?.message ?? e);
+      problem = `เข้าห้องเสียงไม่ได้: ${e?.message ?? "unknown"}`;
+    }
+  });
+  return problem;
+}
+
 async function handleControlButton(interaction: ButtonInteraction): Promise<void> {
   const id = interaction.customId;
   if (!id.startsWith(CONTROL_PREFIX)) return;
+
+  // 🕘 history stays clickable while nothing plays, so it has its own access check.
+  if (id === CONTROL_ID.history) {
+    if (!interaction.guildId) return;
+    if (!musicHistory) {
+      await interaction.reply({
+        content: "ประวัติเพลงปิดอยู่ครับ (MUSIC_HISTORY=false)",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    if (!(await requireHistoryAccess(interaction))) return;
+    await interaction.reply({
+      components: [historyPanelFor(interaction.guildId, 0, HISTORY_DEFAULT_SORT)],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   const access = await requirePlayerAccess(interaction);
   if (!access) return;
   const { guildId, session, listening } = access;
@@ -640,21 +742,6 @@ async function handleControlButton(interaction: ButtonInteraction): Promise<void
       components: [
         new ContainerBuilder().addTextDisplayComponents(new TextDisplayBuilder().setContent(text)),
       ],
-      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  if (id === CONTROL_ID.history) {
-    if (!musicHistory) {
-      await interaction.reply({
-        content: "ประวัติเพลงปิดอยู่ครับ (MUSIC_HISTORY=false)",
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-    await interaction.reply({
-      components: [historyPanelFor(guildId, 0, HISTORY_DEFAULT_SORT)],
       flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
     });
     return;
@@ -856,10 +943,9 @@ async function handleHistoryButton(interaction: ButtonInteraction): Promise<void
   }
 
   // play / add
-  const access = await requirePlayerAccess(interaction);
+  const access = await requireHistoryAccess(interaction);
   if (!access) return;
-  const { session, listening } = access;
-  const channelId = listening ? session?.channelId : undefined;
+  const { listening, voiceChannelId } = access;
   const back = (notice: string) =>
     ({ components: [historyPanelFor(guildId, act.page, act.sort, notice)], flags: MessageFlags.IsComponentsV2 }) as const;
 
@@ -868,14 +954,21 @@ async function handleHistoryButton(interaction: ButtonInteraction): Promise<void
     await interaction.update(back(`⚠️ ${HISTORY_GONE}`));
     return;
   }
-  if (!channelId) {
-    await interaction.update(back("⚠️ เอิร์ธยังไม่ได้อยู่ในห้องเสียงครับ — เรียกเอิร์ธเข้าห้องก่อนถึงจะเล่นเพลงได้"));
-    return;
-  }
 
   // Starting a song can take a moment (Lavalink loads the video again), so acknowledge first.
   await interaction.deferUpdate();
   const userTag = `user=${interaction.user.id}`;
+  // Nothing was playing and Earth wasn't in a room: join the clicker's voice channel first, so the
+  // very first song of a session can be started from the history.
+  const session = sessionFor(guildId);
+  const channelId = voiceChannelId;
+  if (!listening) {
+    const problem = await joinRoomForHistory(session, guildId, channelId);
+    if (problem) {
+      await interaction.editReply(back(`⚠️ ${problem}`)).catch(() => {});
+      return;
+    }
+  }
   const title = escapeMdText(clipText(entry.title, 100));
   // The link makes the music bot load exactly this video (no search, no guessing by title).
   const url = `https://www.youtube.com/watch?v=${entry.videoId}`;
