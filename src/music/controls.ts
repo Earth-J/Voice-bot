@@ -7,9 +7,32 @@
  *
  * Only the ids and the look live here; what each button does is handled in index.ts
  * (handleControlButton), which switches on these ids.
+ *
+ * Queue dropdown (also Components V2, see the bottom of this file):
+ *
+ *   📋 [ Dropdown: the songs waiting in the queue ▾ ]     ← sits right above the button rows
+ *        │ pick a song
+ *        ▼
+ *   ephemeral panel:  ### 🎵 เพลงในคิว #3
+ *                     **Title** …                         (+ thumbnail)
+ *                     [ ▶ เล่นเลย ]  [ 🗑 ลบออกจากคิว ]
+ *
+ * index.ts handles it in handleQueueSelect / handleQueueButton.
  */
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
-import type { LoopMode } from "./queue.ts";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ContainerBuilder,
+  SectionBuilder,
+  SeparatorBuilder,
+  SeparatorSpacingSize,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  TextDisplayBuilder,
+  ThumbnailBuilder,
+} from "discord.js";
+import { clip, escapeMd, fmtMs, thumbnailFor, type LoopMode, type QueueTrack } from "./queue.ts";
 
 /** customId prefix — every button of the player starts with it. */
 export const CONTROL_PREFIX = "mc:";
@@ -73,4 +96,125 @@ export function buildControlRows({
       .setDisabled(true),
   );
   return [row1, row2];
+}
+
+// ─── Queue dropdown ──────────────────────────────────────────────────────────
+
+/** customId prefix of the queue dropdown and of the ▶ / 🗑 buttons under a picked song. */
+export const QUEUE_PREFIX = "mq:";
+
+export const QUEUE_ID = {
+  /** The dropdown itself (its value is a song id, see `queueItemId`). */
+  select: "mq:pick",
+  /** "mq:play:<song id>" — play that song now. */
+  playPrefix: "mq:play:",
+  /** "mq:del:<song id>" — remove that song from the queue. */
+  deletePrefix: "mq:del:",
+} as const;
+
+/** Discord shows at most 25 options in one select menu. */
+export const QUEUE_SELECT_MAX = 25;
+
+/**
+ * Stable id for a queued song. The queue's order changes all the time (skip, shuffle, delete…), so
+ * a position in a customId would go stale; the id sticks to the Track object instead (the queue
+ * hands out the same objects every time) and index.ts looks the song up again when it is clicked.
+ */
+const itemIds = new WeakMap<object, string>();
+let nextItemId = 1;
+export function queueItemId(track: object): string {
+  let id = itemIds.get(track);
+  if (!id) {
+    id = `q${(nextItemId++).toString(36)}`;
+    itemIds.set(track, id);
+  }
+  return id;
+}
+
+/**
+ * The queue as a Dropdown Menu (one row, goes inside the player's Container).
+ * The first 25 songs are listed, numbered like in the panel text and like "earth ลบคิว <เลข>".
+ * Empty queue → a greyed-out menu with a single placeholder entry (Discord needs ≥ 1 option).
+ */
+export function buildQueueSelectRow(queue: QueueTrack[]): ActionRowBuilder<StringSelectMenuBuilder> {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(QUEUE_ID.select)
+    .setMinValues(1)
+    .setMaxValues(1);
+
+  if (queue.length === 0) {
+    menu
+      .setPlaceholder("📋 คิวว่าง — ยังไม่มีเพลงรอ")
+      .addOptions(new StringSelectMenuOptionBuilder().setLabel("ยังไม่มีเพลงในคิว").setValue("none"))
+      .setDisabled(true);
+  } else {
+    const shown = queue.slice(0, QUEUE_SELECT_MAX);
+    const count =
+      queue.length > shown.length ? `แสดง ${shown.length} จาก ${queue.length}` : `${queue.length} เพลง`;
+    menu
+      .setPlaceholder(`📋 คิวเพลง (${count}) — เลือกเพื่อ เล่นเลย / ลบ`)
+      .addOptions(
+        shown.map((t, i) => {
+          const info = [t.author ? clip(t.author, 50) : null, fmtMs(t.lengthMs)].filter(Boolean).join(" · ");
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(`${i + 1}. ${clip(t.title, 90)}`) // label max 100 chars
+            .setDescription(clip(info, 100))
+            .setValue(queueItemId(t));
+        }),
+      );
+  }
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+}
+
+/**
+ * What the person sees (ephemeral) after picking a song in the dropdown:
+ * the song (with its thumbnail when it has one) and the two buttons ▶ เล่นเลย / 🗑 ลบออกจากคิว.
+ */
+export function buildQueueItemPanel(track: QueueTrack, position: number): ContainerBuilder {
+  const lines = [`### 🎵 เพลงในคิว #${position}`, `**${escapeMd(clip(track.title, 100))}**`];
+  const info = [track.author ? escapeMd(clip(track.author, 60)) : null, fmtMs(track.lengthMs)]
+    .filter(Boolean)
+    .join(" · ");
+  lines.push(`-# ${info}`);
+  if (track.requestedBy) lines.push(`-# ขอเพลง โดย <@${track.requestedBy}>`);
+  const text = new TextDisplayBuilder().setContent(lines.join("\n"));
+
+  const container = new ContainerBuilder();
+  const thumb = thumbnailFor(track);
+  if (thumb) {
+    // A Section needs an accessory; without a picture a plain TextDisplay does the job.
+    container.addSectionComponents(
+      new SectionBuilder()
+        .addTextDisplayComponents(text)
+        .setThumbnailAccessory(new ThumbnailBuilder().setURL(thumb)),
+    );
+  } else {
+    container.addTextDisplayComponents(text);
+  }
+
+  const id = queueItemId(track);
+  container.addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small));
+  container.addActionRowComponents(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${QUEUE_ID.playPrefix}${id}`)
+        .setLabel("เล่นเลย")
+        .setEmoji("▶️")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`${QUEUE_ID.deletePrefix}${id}`)
+        .setLabel("ลบออกจากคิว")
+        .setEmoji("🗑️")
+        .setStyle(ButtonStyle.Danger),
+    ),
+  );
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent("-# ▶ เล่นเลย = เปลี่ยนไปเล่นเพลงนี้ทันที · 🗑 = เอาออกจากคิว"),
+  );
+  return container;
+}
+
+/** One-line result shown in place of the song panel once it has been used (no buttons left). */
+export function buildQueueNotice(text: string): ContainerBuilder {
+  return new ContainerBuilder().addTextDisplayComponents(new TextDisplayBuilder().setContent(text));
 }

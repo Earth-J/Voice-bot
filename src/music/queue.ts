@@ -75,18 +75,19 @@ export class TrackQueue<T> {
   }
 }
 
-function fmtMs(ms: number): string {
+/** m:ss (shared with the queue dropdown in controls.ts). */
+export function fmtMs(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
   const m = Math.floor(total / 60);
   const s = String(total % 60).padStart(2, "0");
   return `${m}:${s}`;
 }
 
-function clip(s: string, n = 80): string {
+export function clip(s: string, n = 80): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
-function escapeMd(s: string): string {
+export function escapeMd(s: string): string {
   return s.replace(/[\\*_`~|>\[\]]/g, "\\$&");
 }
 
@@ -161,7 +162,7 @@ export function buildQueueListEmbed<T extends QueueTrack>(now: T | null, queue: 
     lines.push(...queueLines(queue, 25));
   }
   lines.push("");
-  lines.push("ลบเพลงในคิว: พูด `earth ลบคิว <เลข>`");
+  lines.push("เลือกเพลงจาก Dropdown ใต้แผงเพลงเพื่อ ▶ เล่นเลย / 🗑 ลบ — หรือพูด `earth ลบคิว <เลข>`");
   return { title: "🎵 คิวเพลง", description: lines.join("\n"), color: INVISIBLE_EMBED_COLOR };
 }
 

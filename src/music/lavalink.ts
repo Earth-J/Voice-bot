@@ -401,6 +401,34 @@ export class LavalinkMusic {
   }
 
   /**
+   * ▶ Play queue item #`index` (1 = next up) RIGHT NOW — the "เล่นเลย" button of the queue dropdown.
+   * The song is taken out of the queue; the one that was playing is replaced. Like skip(), with
+   * loop-queue on it goes to the back of the line; otherwise it lands in the history, so ⏮ can
+   * still bring it back. The rest of the queue keeps its order.
+   * Returns the song now playing, or null when there is no such item / nothing to play it on.
+   * Throws if Lavalink refuses to start it (the song is then put back at the front of the queue).
+   */
+  async playFromQueue(guildId: string, index: number): Promise<Track | null> {
+    const q = this.queues.get(guildId);
+    const player = this.shoukaku.players.get(guildId);
+    if (!q || !player) return null;
+    const track = q.remove(index);
+    if (!track) return null;
+    this.bump(guildId); // a slow search for an earlier request must not override this pick
+    const cur = this.now.get(guildId);
+    try {
+      await this.startTrack(guildId, player, track); // old song ends as 'replaced' → ignored
+    } catch (e) {
+      q.unshift(track); // couldn't start it — don't lose it
+      this.changed(guildId);
+      throw e;
+    }
+    if (cur && this.getLoop(guildId) === "queue") q.push(cur);
+    this.changed(guildId);
+    return track;
+  }
+
+  /**
    * Search YouTube and return the best playable result (no streams, not too long).
    * "<song> ของ <artist>" is rewritten to "<artist> <song>" and the result's title must
    * contain the song name (see music/query.ts).
