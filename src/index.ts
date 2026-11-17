@@ -77,6 +77,7 @@ import {
   TextDisplayBuilder,
   type ButtonInteraction,
   type Message,
+  type StringSelectMenuInteraction,
   type VoiceState,
   type ChatInputCommandInteraction,
   type GuildMember,
@@ -93,9 +94,20 @@ import { sttConfigError, sttSummary } from "./stt/index.ts";
 import { LavalinkMusic } from "./music/lavalink.ts";
 import { MusicHistory } from "./music/history.ts";
 import { loadSfx } from "./sfx.ts";
-import { buildPlayerSections, buildQueueListText } from "./music/queue.ts";
+import { buildPlayerSections, buildQueueListText, escapeMd as escapeMdText } from "./music/queue.ts";
 import { renderIdleCard, renderNowPlaying } from "./music/nowPlayingCard.ts";
-import { CONTROL_ID, CONTROL_PREFIX, VOLUME_STEP, buildControlRows } from "./music/controls.ts";
+import {
+  CONTROL_ID,
+  CONTROL_PREFIX,
+  QUEUE_ID,
+  QUEUE_PREFIX,
+  VOLUME_STEP,
+  buildControlRows,
+  buildQueueItemPanel,
+  buildQueueNotice,
+  buildQueueSelectRow,
+  queueItemId,
+} from "./music/controls.ts";
 import { parseSongRequest } from "./music/request.ts";
 import { SetupStore } from "./setup-store.ts";
 
@@ -482,6 +494,10 @@ async function queuePayload(guildId: string) {
     new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small),
   );
 
+  // Queue as a Dropdown Menu: pick a song → ▶ เล่นเลย / 🗑 ลบ (handleQueueSelect / handleQueueButton).
+  // Greyed out while the queue is empty, like the buttons below.
+  container.addActionRowComponents(buildQueueSelectRow(music.getQueue(guildId)));
+
   // Buttons are always shown; with nothing playing they are all greyed out / unclickable.
   container.addActionRowComponents(
     ...buildControlRows({ paused, loop, disabled: !np }),
@@ -574,11 +590,15 @@ async function kickSpeaker(guildId: string, userId: string): Promise<void> {
 // music room, they only work for people sitting in Earth's voice channel (owners always).
 // Everything except 📋 is answered with deferUpdate(): the music state change fires
 // music.onChange, which re-renders the embed (new card, new button states) on its own.
-async function handleControlButton(interaction: ButtonInteraction): Promise<void> {
-  const id = interaction.customId;
-  if (!id.startsWith(CONTROL_PREFIX)) return;
+/**
+ * Who may use the player's buttons / queue dropdown: people sitting in Earth's voice channel
+ * (owners always). Replies with the reason (ephemeral) and returns null when not allowed.
+ */
+async function requirePlayerAccess(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+): Promise<{ guildId: string; session: VoiceSession | undefined; listening: boolean } | null> {
   const guildId = interaction.guildId;
-  if (!guildId) return;
+  if (!guildId) return null;
 
   const session = sessions.get(guildId);
   const listening = session?.state === "listening" && !!session.channelId;
@@ -590,8 +610,17 @@ async function handleControlButton(interaction: ButtonInteraction): Promise<void
         : "เอิร์ธยังไม่ได้อยู่ในห้องเสียงครับ",
       flags: MessageFlags.Ephemeral,
     });
-    return;
+    return null;
   }
+  return { guildId, session, listening };
+}
+
+async function handleControlButton(interaction: ButtonInteraction): Promise<void> {
+  const id = interaction.customId;
+  if (!id.startsWith(CONTROL_PREFIX)) return;
+  const access = await requirePlayerAccess(interaction);
+  if (!access) return;
+  const { guildId, session, listening } = access;
 
   if (id === CONTROL_ID.queue) {
     const text = buildQueueListText(music.nowPlaying(guildId), music.getQueue(guildId));
@@ -649,10 +678,108 @@ async function handleControlButton(interaction: ButtonInteraction): Promise<void
   }
 }
 
+// ─── Queue dropdown ──────────────────────────────────────────────────────────
+// The Dropdown Menu in the player panel lists the queue (see music/controls.ts). Picking a song
+// opens an ephemeral Components V2 panel with two buttons: ▶ เล่นเลย (play it now) and
+// 🗑 ลบออกจากคิว. Songs are found again by their id (queueItemId) at click time, because the
+// queue may have been reordered / played / deleted since the dropdown was drawn.
+
+/** 1-based queue position of the song with this id, or 0 when it is not in the queue any more. */
+function queuePositionOf(guildId: string, itemId: string): number {
+  return music.getQueue(guildId).findIndex((t) => queueItemId(t) === itemId) + 1;
+}
+
+const QUEUE_GONE = "เพลงนี้ไม่อยู่ในคิวแล้วครับ (ถูกเล่นหรือลบไปแล้ว)";
+
+/** Dropdown → show the picked song with its ▶ / 🗑 buttons. */
+async function handleQueueSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  if (interaction.customId !== QUEUE_ID.select) return;
+  const access = await requirePlayerAccess(interaction);
+  if (!access) return;
+  const { guildId } = access;
+
+  // deferUpdate() leaves the shared panel untouched and resets the dropdown, so the same song can be picked again.
+  await interaction.deferUpdate();
+  const position = queuePositionOf(guildId, interaction.values[0] ?? "");
+  const track = position > 0 ? music.getQueue(guildId)[position - 1] : undefined;
+  if (!track) {
+    await interaction.followUp({ content: QUEUE_GONE, flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
+  await interaction
+    .followUp({
+      components: [buildQueueItemPanel(track, position)],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    })
+    .catch((e: any) => console.warn("[earth-voice] queue item panel failed:", e?.message ?? e));
+}
+
+/** ▶ เล่นเลย / 🗑 ลบออกจากคิว, from the ephemeral panel of a picked song. */
+async function handleQueueButton(interaction: ButtonInteraction): Promise<void> {
+  const id = interaction.customId;
+  const isPlay = id.startsWith(QUEUE_ID.playPrefix);
+  const isDelete = id.startsWith(QUEUE_ID.deletePrefix);
+  if (!isPlay && !isDelete) return;
+  const access = await requirePlayerAccess(interaction);
+  if (!access) return;
+  const { guildId, session, listening } = access;
+  const userTag = `user=${interaction.user.id}`;
+
+  const itemId = id.slice((isPlay ? QUEUE_ID.playPrefix : QUEUE_ID.deletePrefix).length);
+  const position = queuePositionOf(guildId, itemId);
+  const track = position > 0 ? music.getQueue(guildId)[position - 1] : undefined;
+  if (!track) {
+    await interaction.update({
+      components: [buildQueueNotice(`⚠️ ${QUEUE_GONE}`)],
+      flags: MessageFlags.IsComponentsV2,
+    });
+    return;
+  }
+  const title = escapeMdText(track.title);
+
+  if (isDelete) {
+    const removed = music.removeFromQueue(guildId, position); // fires onChange → the panel redraws itself
+    console.log(`[earth-voice] 🗑️ queue dropdown ${userTag}: remove #${position} → ${removed ? `"${removed.title}"` : "no such item"}`);
+    if (removed && listening) session!.playSfx("remove");
+    await interaction.update({
+      components: [buildQueueNotice(removed ? `🗑️ ลบ **${title}** ออกจากคิวแล้ว` : `⚠️ ${QUEUE_GONE}`)],
+      flags: MessageFlags.IsComponentsV2,
+    });
+    return;
+  }
+
+  // ▶ เล่นเลย — starting a song can take a moment (Lavalink), so acknowledge first.
+  await interaction.deferUpdate();
+  try {
+    const playing = await music.playFromQueue(guildId, position);
+    console.log(`[earth-voice] ▶️ queue dropdown ${userTag}: play #${position} → ${playing ? `"${playing.title}"` : "failed"}`);
+    if (playing && listening) session!.playSfx("play");
+    await interaction.editReply({
+      components: [buildQueueNotice(playing ? `▶️ กำลังเล่น **${title}**` : `⚠️ ${QUEUE_GONE}`)],
+      flags: MessageFlags.IsComponentsV2,
+    });
+  } catch (e: any) {
+    console.warn("[earth-voice] queue dropdown play failed:", e?.message ?? e);
+    await interaction
+      .editReply({
+        components: [buildQueueNotice(`⚠️ เล่นไม่สำเร็จ: ${e?.message ?? "unknown"}`)],
+        flags: MessageFlags.IsComponentsV2,
+      })
+      .catch(() => {});
+  }
+}
+
 // ─── Slash commands ──────────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isStringSelectMenu()) {
+    handleQueueSelect(interaction).catch((e: any) =>
+      console.warn("[earth-voice] queue dropdown failed:", e?.message ?? e),
+    );
+    return;
+  }
   if (interaction.isButton()) {
-    handleControlButton(interaction).catch((e: any) =>
+    const handler = interaction.customId.startsWith(QUEUE_PREFIX) ? handleQueueButton : handleControlButton;
+    handler(interaction).catch((e: any) =>
       console.warn("[earth-voice] player button failed:", e?.message ?? e),
     );
     return;
