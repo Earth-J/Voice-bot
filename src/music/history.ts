@@ -17,6 +17,10 @@
  *               or, with no artist, exactly one played title contains a fairly long song name.
  * Anything unsure returns null and the normal YouTube search runs, as before.
  *
+ * The 🕘 button of the player panel lists what this server has played (countTracks / listTracks /
+ * getTrack) — one row per different song, newest first or most played first, so the person can
+ * pick one to play again.
+ *
  * Every method swallows its own database errors: history is a bonus, it must never stop a song.
  */
 import { Database } from "bun:sqlite";
@@ -63,6 +67,21 @@ export interface PlayRecord {
   author: string | null;
   requestedBy: string | null;
   playedAt: number;
+}
+
+/** Order of the song list: most recently played first, or most played first (ties → most recent). */
+export type HistorySort = "recent" | "plays";
+
+/** One different song a server has played, with how often and when (for the 🕘 history dropdown). */
+export interface HistoryEntry {
+  videoId: string;
+  title: string;
+  author: string | null;
+  lengthMs: number;
+  /** How many times this server has played it. */
+  plays: number;
+  /** When it was last played here (epoch ms). */
+  lastPlayedAt: number;
 }
 
 /** Same request ⇒ same key: "Annie ของ Web2Earth" and "wave to earth annie" both end up here. */
@@ -117,6 +136,32 @@ interface TrackRow {
   length_ms: number;
   artwork_url: string | null;
   plays?: number;
+}
+
+interface EntryRow {
+  video_id: string;
+  title: string;
+  author: string | null;
+  length_ms: number;
+  plays: number;
+  last: number;
+}
+
+/** One row per song this server played: `?1` = guild id, optionally filtered / paged by the caller. */
+const ENTRY_SELECT = `
+  SELECT t.video_id, t.title, t.author, t.length_ms, COUNT(p.id) AS plays, MAX(p.played_at) AS last
+  FROM plays p JOIN tracks t ON t.video_id = p.video_id
+  WHERE p.guild_id = ?1`;
+
+function toHistoryEntry(r: EntryRow): HistoryEntry {
+  return {
+    videoId: r.video_id,
+    title: r.title,
+    author: r.author,
+    lengthMs: r.length_ms,
+    plays: r.plays,
+    lastPlayedAt: r.last,
+  };
 }
 
 function toHistoryTrack(r: TrackRow): HistoryTrack {
@@ -265,6 +310,53 @@ export class MusicHistory {
       return { track: toHistoryTrack(only), how: "fuzzy", plays: only.plays ?? 1 };
     } catch (e: any) {
       console.warn("[history] lookup failed:", e?.message ?? e);
+      return null;
+    }
+  }
+
+  /** How many different songs this server has played. */
+  countTracks(guildId: string): number {
+    try {
+      const row = this.db
+        .query(`SELECT COUNT(DISTINCT video_id) AS n FROM plays WHERE guild_id = ?`)
+        .get(guildId) as { n: number } | null;
+      return row?.n ?? 0;
+    } catch (e: any) {
+      console.warn("[history] countTracks failed:", e?.message ?? e);
+      return 0;
+    }
+  }
+
+  /**
+   * The different songs this server has played (a song played ten times shows up once).
+   * `sort`: "recent" = most recently played first (default); "plays" = most played first, and among
+   * songs played equally often the most recent first. `offset` / `limit` page through it; the 🕘
+   * dropdown shows 25 per page.
+   */
+  listTracks(guildId: string, limit = 25, offset = 0, sort: HistorySort = "recent"): HistoryEntry[] {
+    const order = sort === "plays" ? "COUNT(p.id) DESC, MAX(p.id) DESC" : "MAX(p.id) DESC";
+    try {
+      return (
+        this.db
+          .query(`${ENTRY_SELECT} GROUP BY t.video_id ORDER BY ${order} LIMIT ?2 OFFSET ?3`)
+          .all(guildId, Math.max(0, limit), Math.max(0, offset)) as EntryRow[]
+      ).map(toHistoryEntry);
+    } catch (e: any) {
+      console.warn("[history] listTracks failed:", e?.message ?? e);
+      return [];
+    }
+  }
+
+  /** One song of this server's history (null when this server never played it). */
+  getTrack(guildId: string, videoId: string): HistoryEntry | null {
+    if (!VIDEO_ID_RE.test(videoId)) return null;
+    try {
+      const row = this.db
+        .query(`${ENTRY_SELECT} AND p.video_id = ?2 GROUP BY t.video_id`)
+        .get(guildId, videoId) as EntryRow | null;
+      return row ? toHistoryEntry(row) : null;
+    } catch (e: any) {
+      console.warn("[history] getTrack failed:", e?.message ?? e);
       return null;
     }
   }
