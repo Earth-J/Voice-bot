@@ -92,20 +92,28 @@ import { parseVoiceCommand } from "./voice-command.ts";
 import { correctSongQuery } from "./stt/gemini.ts";
 import { sttConfigError, sttSummary } from "./stt/index.ts";
 import { LavalinkMusic } from "./music/lavalink.ts";
-import { MusicHistory } from "./music/history.ts";
+import { MusicHistory, type HistorySort } from "./music/history.ts";
 import { loadSfx } from "./sfx.ts";
-import { buildPlayerSections, buildQueueListText, escapeMd as escapeMdText } from "./music/queue.ts";
+import { buildPlayerSections, buildQueueListText, clip as clipText, escapeMd as escapeMdText } from "./music/queue.ts";
 import { renderIdleCard, renderNowPlaying } from "./music/nowPlayingCard.ts";
 import {
   CONTROL_ID,
   CONTROL_PREFIX,
+  HISTORY_DEFAULT_SORT,
+  HISTORY_PAGE_SIZE,
+  HISTORY_PREFIX,
   QUEUE_ID,
   QUEUE_PREFIX,
   VOLUME_STEP,
   buildControlRows,
+  buildHistoryItemPanel,
+  buildHistoryPanel,
   buildQueueItemPanel,
   buildQueueNotice,
   buildQueueSelectRow,
+  clampHistoryPage,
+  historyPageCount,
+  parseHistoryId,
   queueItemId,
 } from "./music/controls.ts";
 import { parseSongRequest } from "./music/request.ts";
@@ -504,7 +512,7 @@ async function queuePayload(guildId: string) {
 
   // Buttons are always shown; with nothing playing they are all greyed out / unclickable.
   container.addActionRowComponents(
-    ...buildControlRows({ paused, loop, disabled: !np }),
+    ...buildControlRows({ paused, loop, disabled: !np, history: !!musicHistory }),
   );
 
   return {
@@ -632,6 +640,21 @@ async function handleControlButton(interaction: ButtonInteraction): Promise<void
       components: [
         new ContainerBuilder().addTextDisplayComponents(new TextDisplayBuilder().setContent(text)),
       ],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (id === CONTROL_ID.history) {
+    if (!musicHistory) {
+      await interaction.reply({
+        content: "ประวัติเพลงปิดอยู่ครับ (MUSIC_HISTORY=false)",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    await interaction.reply({
+      components: [historyPanelFor(guildId, 0, HISTORY_DEFAULT_SORT)],
       flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
     });
     return;
@@ -773,16 +796,133 @@ async function handleQueueButton(interaction: ButtonInteraction): Promise<void> 
   }
 }
 
+// ─── History dropdown (🕘 button) ────────────────────────────────────────────
+// 🕘 opens an ephemeral Components V2 panel (one per person) with every song this server has ever
+// played, 25 per page: a dropdown + ⏮ ◀ 2/5 ▶ ⏭ page buttons + [เปิดล่าสุด] [เปิดบ่อยสุด] sort buttons
+// (see music/controls.ts).
+// Picking a song turns the same message into the song's panel with [เล่นเลย] [เพิ่มเข้าคิว]
+// [กลับไปรายการ]; after playing / queueing it goes back to the list with a one-line result.
+// The sort order and page number travel in every customId, so nothing is stored here. Paging and picking only
+// read the database; playing / queueing needs the same access as the other player buttons.
+
+const HISTORY_GONE = "ไม่พบเพลงนี้ในประวัติของเซิร์ฟเวอร์นี้แล้วครับ";
+
+/** The history panel for `page` of `sort` (clamped — the history may have grown or shrunk since it was drawn). */
+function historyPanelFor(guildId: string, page: number, sort: HistorySort, notice?: string): ContainerBuilder {
+  const total = musicHistory?.countTracks(guildId) ?? 0;
+  const pages = historyPageCount(total);
+  const p = clampHistoryPage(page, pages);
+  const entries = musicHistory?.listTracks(guildId, HISTORY_PAGE_SIZE, p * HISTORY_PAGE_SIZE, sort) ?? [];
+  return buildHistoryPanel({ entries, sort, page: p, pages, total, notice });
+}
+
+/** Dropdown → show the picked song with its [เล่นเลย] / [เพิ่มเข้าคิว] / [กลับไปรายการ] buttons. */
+async function handleHistorySelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const act = parseHistoryId(interaction.customId);
+  if (!act || act.kind !== "pick") return;
+  const guildId = interaction.guildId;
+  if (!guildId || !musicHistory) return;
+  const entry = musicHistory.getTrack(guildId, interaction.values[0] ?? "");
+  await interaction.update({
+    components: [
+      entry
+        ? buildHistoryItemPanel(entry, act.page, act.sort)
+        : historyPanelFor(guildId, act.page, act.sort, `⚠️ ${HISTORY_GONE}`),
+    ],
+    flags: MessageFlags.IsComponentsV2,
+  });
+}
+
+/** Page buttons, and [เล่นเลย] / [เพิ่มเข้าคิว] of a picked song. */
+async function handleHistoryButton(interaction: ButtonInteraction): Promise<void> {
+  const act = parseHistoryId(interaction.customId);
+  if (!act || act.kind === "pick") return;
+  const guildId = interaction.guildId;
+  if (!guildId) return;
+  if (!musicHistory) {
+    await interaction.update({
+      components: [buildQueueNotice("⚠️ ประวัติเพลงปิดอยู่ครับ (MUSIC_HISTORY=false)")],
+      flags: MessageFlags.IsComponentsV2,
+    });
+    return;
+  }
+
+  if (act.kind === "page") {
+    await interaction.update({
+      components: [historyPanelFor(guildId, act.page, act.sort)],
+      flags: MessageFlags.IsComponentsV2,
+    });
+    return;
+  }
+
+  // play / add
+  const access = await requirePlayerAccess(interaction);
+  if (!access) return;
+  const { session, listening } = access;
+  const channelId = listening ? session?.channelId : undefined;
+  const back = (notice: string) =>
+    ({ components: [historyPanelFor(guildId, act.page, act.sort, notice)], flags: MessageFlags.IsComponentsV2 }) as const;
+
+  const entry = musicHistory.getTrack(guildId, act.videoId ?? "");
+  if (!entry) {
+    await interaction.update(back(`⚠️ ${HISTORY_GONE}`));
+    return;
+  }
+  if (!channelId) {
+    await interaction.update(back("⚠️ เอิร์ธยังไม่ได้อยู่ในห้องเสียงครับ — เรียกเอิร์ธเข้าห้องก่อนถึงจะเล่นเพลงได้"));
+    return;
+  }
+
+  // Starting a song can take a moment (Lavalink loads the video again), so acknowledge first.
+  await interaction.deferUpdate();
+  const userTag = `user=${interaction.user.id}`;
+  const title = escapeMdText(clipText(entry.title, 100));
+  // The link makes the music bot load exactly this video (no search, no guessing by title).
+  const url = `https://www.youtube.com/watch?v=${entry.videoId}`;
+  try {
+    let notice: string;
+    if (act.kind === "play") {
+      const track = await music.play(guildId, channelId, url, interaction.user.id); // replaces the current song
+      console.log(`[earth-voice] 🕘 history dropdown ${userTag}: play "${entry.title}" → ${track ? "ok" : "failed"}`);
+      if (track) session?.playSfx("play");
+      notice = track
+        ? `<:4767voiceevent:1569242043107115118> กำลังเล่น **${title}**`
+        : "⚠️ เล่นเพลงนี้ไม่ได้ครับ (วิดีโอถูกลบ เล่นไม่ได้ หรือยาวเกินกำหนด)";
+    } else {
+      const r = await music.enqueue(guildId, channelId, url, interaction.user.id); // nothing playing → plays now
+      console.log(
+        `[earth-voice] 🕘 history dropdown ${userTag}: queue "${entry.title}" → ${r ? `#${r.position}` : "failed"}`,
+      );
+      if (r) session?.playSfx(r.position === 0 ? "play" : "add");
+      notice = !r
+        ? "⚠️ เพิ่มเพลงนี้ไม่ได้ครับ (วิดีโอเล่นไม่ได้ ยาวเกินกำหนด หรือคิวเต็ม)"
+        : r.position === 0
+          ? `<:4767voiceevent:1569242043107115118> กำลังเล่น **${title}**`
+          : `➕ เพิ่ม **${title}** เข้าคิวแล้ว (คิวที่ ${r.position})`;
+    }
+    await interaction.editReply(back(notice));
+  } catch (e: any) {
+    console.warn("[earth-voice] history dropdown play failed:", e?.message ?? e);
+    await interaction.editReply(back(`⚠️ เล่นไม่สำเร็จ: ${e?.message ?? "unknown"}`)).catch(() => {});
+  }
+}
+
 // ─── Slash commands ──────────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isStringSelectMenu()) {
-    handleQueueSelect(interaction).catch((e: any) =>
-      console.warn("[earth-voice] queue dropdown failed:", e?.message ?? e),
+    const handler = interaction.customId.startsWith(HISTORY_PREFIX) ? handleHistorySelect : handleQueueSelect;
+    handler(interaction).catch((e: any) =>
+      console.warn("[earth-voice] dropdown failed:", e?.message ?? e),
     );
     return;
   }
   if (interaction.isButton()) {
-    const handler = interaction.customId.startsWith(QUEUE_PREFIX) ? handleQueueButton : handleControlButton;
+    const id = interaction.customId;
+    const handler = id.startsWith(QUEUE_PREFIX)
+      ? handleQueueButton
+      : id.startsWith(HISTORY_PREFIX)
+        ? handleHistoryButton
+        : handleControlButton;
     handler(interaction).catch((e: any) =>
       console.warn("[earth-voice] player button failed:", e?.message ?? e),
     );
