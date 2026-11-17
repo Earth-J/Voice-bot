@@ -71,10 +71,7 @@ export const VOLUME_STEP = 5;
 export interface ControlState {
   paused: boolean;
   loop: LoopMode;
-  /**
-   * Nothing is playing: show every button, but greyed out and unclickable.
-   * (🕘 history is the exception — you can pick a song from it while idle.)
-   */
+  /** Nothing is playing: show every button (🕘 history included), but greyed out and unclickable. */
   disabled?: boolean;
   /** false = the song history is switched off (MUSIC_HISTORY=false), so 🕘 is greyed out. Default true. */
   history?: boolean;
@@ -108,8 +105,8 @@ export function buildControlRows({
     btn(CONTROL_ID.volumeDown, "🔉"),
     btn(CONTROL_ID.stop, "<:Gemini_Generated_Image_pj02gnpj0:1569243957844508672>"),
     btn(CONTROL_ID.volumeUp, "🔊"),
-    // Song history: usable while idle too (pick something to play), unlike the other buttons.
-    btn(CONTROL_ID.history, "🕘", !history),
+    // Greyed out like the others while nothing plays, and also when the song history is switched off.
+    btn(CONTROL_ID.history, "🕘", disabled || !history),
   );
   return [row1, row2];
 }
