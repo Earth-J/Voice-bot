@@ -167,11 +167,19 @@ export function buildQueueSelectRow(queue: QueueTrack[]): ActionRowBuilder<Strin
 }
 
 /**
+ * 16:9 YouTube thumbnail for the song panel. `thumbnailFor` gives hqdefault.jpg, which is 4:3 and
+ * has black bars baked in above / below a 16:9 video; mqdefault.jpg is 16:9 with no bars.
+ */
+function itemThumbnail(track: QueueTrack): string | undefined {
+  return thumbnailFor(track)?.replace("/hqdefault.jpg", "/mqdefault.jpg");
+}
+
+/**
  * What the person sees (ephemeral) after picking a song in the dropdown:
  * the song (with its thumbnail when it has one) and the two buttons ▶ เล่นเลย / 🗑 ลบออกจากคิว.
  */
 export function buildQueueItemPanel(track: QueueTrack, position: number): ContainerBuilder {
-  const lines = [`### 🎵 เพลงในคิว #${position}`, `**${escapeMd(clip(track.title, 100))}**`];
+  const lines = [`### <:1731discordprofileactivitywhite:1569242674307797042> เพลงในคิว #${position}`, `**${escapeMd(clip(track.title, 100))}**`];
   const info = [track.author ? escapeMd(clip(track.author, 60)) : null, fmtMs(track.lengthMs)]
     .filter(Boolean)
     .join(" · ");
@@ -180,7 +188,7 @@ export function buildQueueItemPanel(track: QueueTrack, position: number): Contai
   const text = new TextDisplayBuilder().setContent(lines.join("\n"));
 
   const container = new ContainerBuilder();
-  const thumb = thumbnailFor(track);
+  const thumb = itemThumbnail(track);
   if (thumb) {
     // A Section needs an accessory; without a picture a plain TextDisplay does the job.
     container.addSectionComponents(
@@ -205,9 +213,6 @@ export function buildQueueItemPanel(track: QueueTrack, position: number): Contai
         .setLabel("ลบออกจากคิว")
         .setStyle(ButtonStyle.Danger),
     ),
-  );
-  container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent("-# ▶ เล่นเลย = เปลี่ยนไปเล่นเพลงนี้ทันที · 🗑 = เอาออกจากคิว"),
   );
   return container;
 }
