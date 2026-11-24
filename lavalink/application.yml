@@ -50,10 +50,12 @@ plugins:
     clients:
       - MUSIC
       - TV
-      - TVHTML5EMBEDDED
+      - TVHTML5_SIMPLY
       - WEB
       - WEBEMBEDDED
       - ANDROID_VR
+    remoteCipher:
+      url: "https://cipher.kikkia.dev/"
 
 logging:
   level:
