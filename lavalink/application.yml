@@ -49,9 +49,11 @@ plugins:
     allowDirectPlaylistIds: false
     clients:
       - MUSIC
-      - ANDROID_VR
+      - TV
+      - TVHTML5EMBEDDED
       - WEB
       - WEBEMBEDDED
+      - ANDROID_VR
 
 logging:
   level:
